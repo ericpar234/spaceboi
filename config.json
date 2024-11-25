@@ -1,0 +1,24 @@
+{
+  "urls": [
+    "https://celestrak.org/NORAD/elements/gp.php?GROUP=weather&FORMAT=json",
+    "https://celestrak.org/NORAD/elements/gp.php?GROUP=amateur&FORMAT=json"
+  ],
+
+  "lat": 40.7128,
+  "lon": -74.0060,
+
+  "filter_enabled": true,
+
+  "satellites": [
+    "NOAA 15",
+    "NOAA 18",
+    "NOAA 19",
+    "METEOR-M2 2",
+    "METEOR-M2 3",
+    "ISS (ZARYA)"
+  ],
+
+  "min_alt": 75,
+
+  "hours": 100 
+}
