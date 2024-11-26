@@ -1,19 +1,19 @@
-from skyfield.api import Topos, load, EarthSatellite
 from datetime import datetime, timedelta
 import math
-import concurrent.futures
-from io import BytesIO
-import requests
-import json
-from io import BytesIO
-import pytz
-import hashlib
 import os
 import time
+import hashlib
+import json
+import requests
+from io import BytesIO
+import concurrent.futures
+
+import numpy as np
 import matplotlib.pyplot as plt
 from matplotlib.animation import FuncAnimation
-import numpy as np
+import pytz
 
+from skyfield.api import Topos, load, EarthSatellite
 
 def calcPasses(satellite, startTime, hours, topo, minAltitude=0):
     from itertools import islice
@@ -143,29 +143,27 @@ def plot_event(satellite, event, ts, ax=None):
     # Plot the pass
     ax.plot(azimuths, altitudes, label=f"{event['satellite']}", marker=None)
 
-    # Draw a cheveron to indicate the pass direction
 
-    for i, time in enumerate(times):
-       
-        label = ""
+    max_alt = max(altitudes)
+    start_label = "← Start " + times[0].astimezone(pytz.timezone('US/Eastern')).strftime('%H:%M')
+    end_label = "← End "+ times[-1].astimezone(pytz.timezone('US/Eastern')).strftime('%H:%M')
+    max_alt_index = np.argmax(altitudes)
+    max_alt_label = times[max_alt_index].astimezone(pytz.timezone('US/Eastern')).strftime('%H:%M')
+    
+    # Annotate start time
 
-        if i == 0 or i == len(times) - 1:
-          if i == 0:
-              label = "S"
-          elif i == len(times) - 1:
-              label = "E"
+    if max_alt_index != 0:
+      ax.annotate(start_label, (azimuths[0], altitudes[0]), xytext=(3, 0), textcoords='offset points')
+    
+    # Annotate end time
+    ax.annotate(end_label, (azimuths[-1], altitudes[-1]), xytext=(3, 0), textcoords='offset points')
+    
+    # Annotate max altitude time
+    ax.annotate(max_alt_label, (azimuths[max_alt_index], max_alt), xytext=(3, 0), textcoords='offset points')
 
-          label += time.astimezone(pytz.timezone('US/Eastern')).strftime('%m/%d - %H:%M:%S')
-
-        elif i == len(times) // 2:
-          label = time.astimezone(pytz.timezone('US/Eastern')).strftime('%H:%M:%S')
-
-        if label:
-          ax.annotate(label, (azimuths[i], altitudes[i]), xytext=(10,0), textcoords='offset points')
 
 
     # Plot location of the sat now if it is in the pass
-
     current_time = ts.now()
 
     if event["startTime"] < current_time < event["endTime"]:
@@ -176,7 +174,7 @@ def plot_event(satellite, event, ts, ax=None):
 
         if alt.degrees > 0:
             ax.plot(np.radians(az.degrees), alt.degrees, 'ro', markersize=10)
-            ax.annotate(event["satellite"], (np.radians(az.degrees), alt.degrees), xytext=(10,0), textcoords='offset points')
+            ax.annotate(event["satellite"], (np.radians(az.degrees), alt.degrees), xytext=(0,-5), textcoords='offset points', ha="center", va="top")
 
     # Customize the plot
     ax.set_theta_zero_location('N')
@@ -197,7 +195,6 @@ def plot_events(satellites, events, ts, ax=None):
     Parameters:
         events (list): List of dictionaries containing event details.
     """
-    fig = plt.figure()
 
     if ax is None:
       ax = fig.add_subplot(111, polar=True)
@@ -212,6 +209,24 @@ def plot_events(satellites, events, ts, ax=None):
     # Add title and legend
     ax.set_title("Satellite Passes in the Sky", va='bottom')
     ax.legend(loc='upper right', bbox_to_anchor=(1.2, 1.05))
+
+def update_plot(frame, satellites, events, ts, ax):
+
+    # Filter current events
+    current_events = [
+        event for event in events
+        if event["startTime"] < ts.now() < event["endTime"]
+    ]
+
+    # Clear the axis
+    ax.clear()
+    
+    
+    # Plot the current events
+    plot_events(satellites, current_events, ts, ax=ax)
+    current_time_string = ts.now().astimezone(pytz.timezone('US/Eastern')).strftime('%m/%d - %H:%M:%S')
+    ax.set_title(f"Current Passes - {current_time_string}")
+
 
 if __name__ == "__main__":
     
@@ -264,12 +279,12 @@ if __name__ == "__main__":
   
 
   events = []
+
+  time_start = time.time()
   for sat in satellites:
     events.extend(calcPasses(sat, t, config["hours"], my_topo, config["min_alt"]))
 
-  print("Total events: %d" % len(events))
-
-
+  print(f"Total passes: {len(events)} calculated in {time.time() - time_start:.2f} seconds")
 
   # Sort by max altitude
 
@@ -289,29 +304,9 @@ if __name__ == "__main__":
           f.write(formatPass(event, pytz.timezone('US/Eastern')))
           f.write("\n")
 
-
-  def update_plot(frame, satellites, events, ts, ax):
-
-      # Filter current events
-      current_events = [
-          event for event in events
-          if event["startTime"] < ts.now() < event["endTime"]
-      ]
-
-      # Clear the axis
-      ax.clear()
-      
-      
-      # Plot the current events
-      plot_events(satellites, current_events, ts, ax=ax)
-      current_time_string = ts.now().astimezone(pytz.timezone('US/Eastern')).strftime('%m/%d - %H:%M:%S')
-      ax.set_title(f"Current Passes - {current_time_string}")
-
-  #plot_events(satellites, events[:3], ts)
-  #plt.show()
-
   fig = plt.figure()
   ax = fig.add_subplot(111, polar=True)
   ani = FuncAnimation(fig, update_plot, fargs=(satellites, events, ts, ax), interval=1000, cache_frame_data=False)
 
   plt.show()
+  plt.close(fig)
