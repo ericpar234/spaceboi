@@ -11,7 +11,7 @@ import concurrent.futures
 import sys
 from PyQt5.QtWidgets import (
     QApplication, QMainWindow, QTableWidget, QTableWidgetItem,
-    QVBoxLayout, QWidget, QPushButton, QHBoxLayout
+    QVBoxLayout, QWidget, QPushButton, QHBoxLayout, QLineEdit, QLabel
 )
 from PyQt5.QtCore import QTimer
 from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
@@ -218,36 +218,21 @@ def plot_events(satellites, events, ts, topo, ax=None):
     ax.set_title("Satellite Passes in the Sky", va='bottom')
     ax.legend(loc='upper right', bbox_to_anchor=(1.2, 1.05))
 
-def update_plot(frame, satellites, events, ts, ax):
-
-    # Filter current events
-    current_events = [
-        event for event in events
-        if event["startTime"] < ts.now() < event["endTime"]
-    ]
-
-    # Clear the axis
-    ax.clear()
-    
-    
-    # Plot the current events
-    plot_events(satellites, current_events, ts, ax=ax)
-    current_time_string = ts.now().astimezone(pytz.timezone('US/Eastern')).strftime('%m/%d - %H:%M:%S')
-    ax.set_title(f"Current Passes - {current_time_string}")
-
 class SatelliteApp(QMainWindow):
 
 
-    def __init__(self, satellites, ts, config, events=[]):
+    def __init__(self,ts, config):
         super().__init__()
-        self.satellites = satellites
-        self.events = events
+        self.satellites = []
+        self.events = []
         self.ts = ts
         self.topo = Topos(config["lat"], config["lon"])
         self.config = config
 
+
+
         # Main layout
-        self.setWindowTitle("Satellite Tracker")
+        self.setWindowTitle("spaceboi")
         central_widget = QWidget()
         self.setCentralWidget(central_widget)
 
@@ -260,12 +245,22 @@ class SatelliteApp(QMainWindow):
 
         # Add table
         self.table = QTableWidget(0, 4)
-        self.table.setHorizontalHeaderLabels(["Satellite", "Start Time", "End Time", "Max Altitude"])
+        self.table.setHorizontalHeaderLabels(["Satellite", f"Start Time {self.config["timezone"]}", f"End Time {self.config["timezone"]}", "Max Altitude"])
         left_layout.addWidget(self.table)
         self.table.itemSelectionChanged.connect(self.on_table_selection_changed)
 
         # Add buttons
         btn_layout = QHBoxLayout()
+        
+        # Add input to change min altitude
+        alt_layout = QVBoxLayout()
+        min_altitude_input = QLineEdit()
+        min_altitude_input.setPlaceholderText(str(self.config["min_alt"]))
+        min_altitude_input.textChanged.connect(self.on_min_altitude_changed)
+        alt_layout.addWidget(QLabel("Min Altitude"))
+        alt_layout.addWidget(min_altitude_input)
+        btn_layout.addLayout(alt_layout)
+
         refresh_btn = QPushButton("Refresh Data")
         refresh_btn.clicked.connect(self.refresh_data)
         btn_layout.addWidget(refresh_btn)
@@ -291,15 +286,32 @@ class SatelliteApp(QMainWindow):
         self.timer.start(1000)
 
         self.refresh_data()
-        self.refresh_table()
-        self.update_current_plot()
-        self.update_single_plot(self.events[0])
 
     def refresh_data(self):
+
+        self.satellites = []
+        for url in self.config["urls"]:
+            text_string = fetchData(url)
+            json_sats = json.loads(text_string)
+
+            for sat in json_sats:
+                # Check not already appended
+                # TODO Fix this
+                esat = EarthSatellite.from_omm(self.ts, sat)
+
+                # search for esat.name in satellites
+
+                if esat.name not in [sat.name for sat in self.satellites]:
+                    self.satellites.append(EarthSatellite.from_omm(self.ts, sat))
+                    print(self.satellites[-1].name)
+
+
+
         if self.config["filter_enabled"]:
             # Filter satellites
             filtered_sats = []
-            for sat in satellites:
+
+            for sat in self.satellites:
                 if sat.name in self.config["satellites"]:
                     filtered_sats.append(sat)
             print("Filtered satellites: %d" % len(filtered_sats))
@@ -310,6 +322,8 @@ class SatelliteApp(QMainWindow):
             self.events.extend(calcPasses(sat, self.ts.now(), self.config["hours"], self.topo, minAltitude=config["min_alt"]))
 
         self.events.sort(key=lambda x: x['startTime'])
+        self.refresh_table()
+        self.update_current_plot()
 
     def refresh_table(self):
         self.table.setRowCount(len(self.events))
@@ -319,7 +333,7 @@ class SatelliteApp(QMainWindow):
             self.table.setItem(i, 0, QTableWidgetItem(event["satellite"]))
             self.table.setItem(i, 1, QTableWidgetItem(str(event["startTime"].astimezone(pytz.timezone('US/Eastern')).strftime('%Y-%m-%d %H:%M:%S'))))
             self.table.setItem(i, 2, QTableWidgetItem(str(event["endTime"].astimezone(pytz.timezone('US/Eastern')).strftime('%Y-%m-%d %H:%M:%S'))))
-            self.table.setItem(i, 3, QTableWidgetItem(f"{event['maxAlt']:.2f}"))
+            self.table.setItem(i, 3, QTableWidgetItem(f"{event['maxAlt']:.0f}"))
 
         # Resize the time cols to fit the content
         self.table.resizeColumnsToContents()
@@ -356,6 +370,13 @@ class SatelliteApp(QMainWindow):
             selected_event = self.events[selected_row]
             self.update_single_plot(selected_event)
 
+    def on_min_altitude_changed(self, text):
+        try:
+            min_alt = int(text)
+            self.config["min_alt"] = min_alt
+        except ValueError:
+            pass
+
 if __name__ == "__main__":
     
   ts = load.timescale()
@@ -367,57 +388,57 @@ if __name__ == "__main__":
   with open('config.json', 'r') as f:
     config = json.load(f)
     print(config.keys())
-  my_topo = Topos(config["lat"], config["lon"])
+  #my_topo = Topos(config["lat"], config["lon"])
 
-  satellites = []
-  for url in config["urls"]:
-    # Get the json data from the URL
+  #satellites = []
+  #for url in config["urls"]:
+  #  # Get the json data from the URL
 
-    text_string = fetchData(url)
-    json_sats = json.loads(text_string)
+  #  text_string = fetchData(url)
+  #  json_sats = json.loads(text_string)
 
-    for sat in json_sats:
-        # Check not already appended
-        # TODO Fix this
-        esat = EarthSatellite.from_omm(ts, sat)
+  #  for sat in json_sats:
+  #      # Check not already appended
+  #      # TODO Fix this
+  #      esat = EarthSatellite.from_omm(ts, sat)
 
-        # search for esat.name in satellites
+  #      # search for esat.name in satellites
 
-        if esat.name not in [sat.name for sat in satellites]:
-         satellites.append(EarthSatellite.from_omm(ts, sat))
-         print(satellites[-1].name)
+  #      if esat.name not in [sat.name for sat in satellites]:
+  #       satellites.append(EarthSatellite.from_omm(ts, sat))
+  #       print(satellites[-1].name)
 
-  print("Total satellites: %d" % len(satellites))
+  #print("Total satellites: %d" % len(satellites))
 
-  if config["filter_enabled"]:
-    # Filter satellites
-    filtered_sats = []
-    for sat in satellites:
-        if sat.name in config["satellites"]:
-            filtered_sats.append(sat)
+  #if config["filter_enabled"]:
+  #  # Filter satellites
+  #  filtered_sats = []
+  #  for sat in satellites:
+  #      if sat.name in config["satellites"]:
+  #          filtered_sats.append(sat)
 
-    print("Filtered satellites: %d" % len(filtered_sats))
+  #  print("Filtered satellites: %d" % len(filtered_sats))
 
-    satellites = filtered_sats
+  #  satellites = filtered_sats
 
-  
+  #
 
-  events = []
+  #events = []
 
-  time_start = time.time()
-  for sat in satellites:
-    events.extend(calcPasses(sat, t, config["hours"], my_topo, config["min_alt"]))
+  #time_start = time.time()
+  #for sat in satellites:
+  #  events.extend(calcPasses(sat, t, config["hours"], my_topo, config["min_alt"]))
 
-  print(f"Total passes: {len(events)} calculated in {time.time() - time_start:.2f} seconds")
+  #print(f"Total passes: {len(events)} calculated in {time.time() - time_start:.2f} seconds")
 
-  # Sort by max altitude
+  ## Sort by max altitude
 
-  events.sort(key=lambda x: x['maxAlt'], reverse=True)
+  #events.sort(key=lambda x: x['maxAlt'], reverse=True)
 
-  with open('output_alt.md', 'w') as f:
-      for event in events:
-          f.write(formatPass(event, pytz.timezone('US/Eastern')))
-          f.write("\n")
+  #with open('output_alt.md', 'w') as f:
+  #    for event in events:
+  #        f.write(formatPass(event, pytz.timezone('US/Eastern')))
+  #        f.write("\n")
 
   # Sort by time
 
@@ -438,6 +459,6 @@ if __name__ == "__main__":
 
   app = QApplication(sys.argv)
   # Assuming satellites, events, ts, and my_topo are already initialized
-  window = SatelliteApp(satellites, ts, config)
+  window = SatelliteApp(ts, config)
   window.show()
   sys.exit(app.exec_())
