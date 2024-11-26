@@ -8,6 +8,15 @@ import requests
 from io import BytesIO
 import concurrent.futures
 
+import sys
+from PyQt5.QtWidgets import (
+    QApplication, QMainWindow, QTableWidget, QTableWidgetItem,
+    QVBoxLayout, QWidget, QPushButton, QHBoxLayout
+)
+from PyQt5.QtCore import QTimer
+from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
+import matplotlib.pyplot as plt
+
 import numpy as np
 import matplotlib.pyplot as plt
 from matplotlib.animation import FuncAnimation
@@ -124,7 +133,7 @@ def fetchData(url):
 
     return text_string
 
-def plot_event(satellite, event, ts, ax=None):
+def plot_event(satellite, event, ts, topo, ax=None):
     """
     Plots a single satellite pass event on a polar plot.
     Parameters:
@@ -161,14 +170,12 @@ def plot_event(satellite, event, ts, ax=None):
     # Annotate max altitude time
     ax.annotate(max_alt_label, (azimuths[max_alt_index], max_alt), xytext=(3, 0), textcoords='offset points')
 
-
-
     # Plot location of the sat now if it is in the pass
     current_time = ts.now()
 
     if event["startTime"] < current_time < event["endTime"]:
             
-        difference = satellite - my_topo
+        difference = satellite - topo
         topocentric = difference.at(current_time)
         alt, az, distance = topocentric.altaz()
 
@@ -189,7 +196,7 @@ def plot_event(satellite, event, ts, ax=None):
     ax.set_xticks(np.radians([0, 90, 180, 270]))
     ax.set_xticklabels(['N', 'E', 'S', 'W'])
 
-def plot_events(satellites, events, ts, ax=None):
+def plot_events(satellites, events, ts, topo, ax=None):
     """
     Plots multiple satellite pass events on a single polar plot.
     Parameters:
@@ -197,6 +204,7 @@ def plot_events(satellites, events, ts, ax=None):
     """
 
     if ax is None:
+      fig = plt.figure()
       ax = fig.add_subplot(111, polar=True)
 
     if not isinstance(events, list):
@@ -204,7 +212,7 @@ def plot_events(satellites, events, ts, ax=None):
 
     for event in events:
         sat = [sat for sat in satellites if sat.name == event["satellite"]][0]
-        plot_event(sat, event, ts, ax=ax)
+        plot_event(sat, event, ts, topo, ax=ax)
 
     # Add title and legend
     ax.set_title("Satellite Passes in the Sky", va='bottom')
@@ -227,6 +235,126 @@ def update_plot(frame, satellites, events, ts, ax):
     current_time_string = ts.now().astimezone(pytz.timezone('US/Eastern')).strftime('%m/%d - %H:%M:%S')
     ax.set_title(f"Current Passes - {current_time_string}")
 
+class SatelliteApp(QMainWindow):
+
+
+    def __init__(self, satellites, ts, config, events=[]):
+        super().__init__()
+        self.satellites = satellites
+        self.events = events
+        self.ts = ts
+        self.topo = Topos(config["lat"], config["lon"])
+        self.config = config
+
+        # Main layout
+        self.setWindowTitle("Satellite Tracker")
+        central_widget = QWidget()
+        self.setCentralWidget(central_widget)
+
+        main_layout = QHBoxLayout()
+        central_widget.setLayout(main_layout)
+
+        # Left layout for table and buttons
+        left_layout = QVBoxLayout()
+        main_layout.addLayout(left_layout)
+
+        # Add table
+        self.table = QTableWidget(0, 4)
+        self.table.setHorizontalHeaderLabels(["Satellite", "Start Time", "End Time", "Max Altitude"])
+        left_layout.addWidget(self.table)
+        self.table.itemSelectionChanged.connect(self.on_table_selection_changed)
+
+        # Add buttons
+        btn_layout = QHBoxLayout()
+        refresh_btn = QPushButton("Refresh Data")
+        refresh_btn.clicked.connect(self.refresh_data)
+        btn_layout.addWidget(refresh_btn)
+        left_layout.addLayout(btn_layout)
+
+        # Right layout for plots
+        right_layout = QVBoxLayout()
+        main_layout.addLayout(right_layout)
+
+        # Add Single plot
+        self.single_fig, self.single_ax = plt.subplots(subplot_kw={'projection': 'polar'})
+        self.single_canvas = FigureCanvas(self.single_fig)
+        right_layout.addWidget(self.single_canvas)
+
+        # Add Current Events plot
+        self.fig, self.ax = plt.subplots(subplot_kw={'projection': 'polar'})
+        self.canvas = FigureCanvas(self.fig)
+        right_layout.addWidget(self.canvas)
+
+        # Timer for updating plot
+        self.timer = QTimer(self)
+        self.timer.timeout.connect(self.update_current_plot)
+        self.timer.start(1000)
+
+        self.refresh_data()
+        self.refresh_table()
+        self.update_current_plot()
+        self.update_single_plot(self.events[0])
+
+    def refresh_data(self):
+        if self.config["filter_enabled"]:
+            # Filter satellites
+            filtered_sats = []
+            for sat in satellites:
+                if sat.name in self.config["satellites"]:
+                    filtered_sats.append(sat)
+            print("Filtered satellites: %d" % len(filtered_sats))
+            self.satellites = filtered_sats
+
+        
+        for sat in self.satellites:
+            self.events.extend(calcPasses(sat, self.ts.now(), self.config["hours"], self.topo, minAltitude=config["min_alt"]))
+
+        self.events.sort(key=lambda x: x['startTime'])
+
+    def refresh_table(self):
+        self.table.setRowCount(len(self.events))
+
+        # Sort by time
+        for i, event in enumerate(self.events):
+            self.table.setItem(i, 0, QTableWidgetItem(event["satellite"]))
+            self.table.setItem(i, 1, QTableWidgetItem(str(event["startTime"].astimezone(pytz.timezone('US/Eastern')).strftime('%Y-%m-%d %H:%M:%S'))))
+            self.table.setItem(i, 2, QTableWidgetItem(str(event["endTime"].astimezone(pytz.timezone('US/Eastern')).strftime('%Y-%m-%d %H:%M:%S'))))
+            self.table.setItem(i, 3, QTableWidgetItem(f"{event['maxAlt']:.2f}"))
+
+        # Resize the time cols to fit the content
+        self.table.resizeColumnsToContents()
+
+        # Don't let the table be edited
+        self.table.setEditTriggers(QTableWidget.NoEditTriggers)
+
+    def update_current_plot(self):
+        self.ax.clear()
+
+        events = []
+
+        for event in self.events:
+            if event["startTime"] < self.ts.now() < event["endTime"]:
+                events.append(event)
+
+        plot_events(self.satellites, events, self.ts, self.topo, self.ax)
+        self.ax.title.set_text(f"Current Passes - {self.ts.now().astimezone(pytz.timezone('US/Eastern')).strftime('%m/%d - %H:%M:%S')}")
+        self.canvas.draw()
+
+    def update_single_plot(self, event):
+        if not event:
+            return
+        sat = [sat for sat in self.satellites if sat.name == event["satellite"]][0]
+        self.single_ax.clear()
+        plot_event(sat, event, self.ts, self.topo, ax=self.single_ax)
+        self.single_ax.title.set_text(f"{event['satellite']} Pass - {event['startTime'].astimezone(pytz.timezone('US/Eastern')).strftime('%m/%d - %H:%M:%S')}")
+        self.single_canvas.draw()
+
+    def on_table_selection_changed(self):
+        selected_items = self.table.selectedItems()
+        if selected_items:
+            selected_row = selected_items[0].row()
+            selected_event = self.events[selected_row]
+            self.update_single_plot(selected_event)
 
 if __name__ == "__main__":
     
@@ -239,7 +367,6 @@ if __name__ == "__main__":
   with open('config.json', 'r') as f:
     config = json.load(f)
     print(config.keys())
-
   my_topo = Topos(config["lat"], config["lon"])
 
   satellites = []
@@ -247,9 +374,6 @@ if __name__ == "__main__":
     # Get the json data from the URL
 
     text_string = fetchData(url)
-
-    print(text_string)
-
     json_sats = json.loads(text_string)
 
     for sat in json_sats:
@@ -297,16 +421,23 @@ if __name__ == "__main__":
 
   # Sort by time
 
-  events.sort(key=lambda x: x['startTime'])
+  #events.sort(key=lambda x: x['startTime'])
 
-  with open('output_time.md', 'w') as f:
-      for event in events:
-          f.write(formatPass(event, pytz.timezone('US/Eastern')))
-          f.write("\n")
+  #with open('output_time.md', 'w') as f:
+  #    for event in events:
+  #        f.write(formatPass(event, pytz.timezone('US/Eastern')))
+  #        f.write("\n")
 
-  fig = plt.figure()
-  ax = fig.add_subplot(111, polar=True)
-  ani = FuncAnimation(fig, update_plot, fargs=(satellites, events, ts, ax), interval=1000, cache_frame_data=False)
+  #fig = plt.figure()
+  #ax = fig.add_subplot(111, polar=True)
+  #ani = FuncAnimation(fig, update_plot, fargs=(satellites, events, ts, ax), interval=1000, cache_frame_data=False)
 
-  plt.show()
-  plt.close(fig)
+  #plt.show()
+  #plt.close(fig)
+
+
+  app = QApplication(sys.argv)
+  # Assuming satellites, events, ts, and my_topo are already initialized
+  window = SatelliteApp(satellites, ts, config)
+  window.show()
+  sys.exit(app.exec_())
