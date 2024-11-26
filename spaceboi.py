@@ -11,8 +11,11 @@ import concurrent.futures
 import sys
 from PyQt5.QtWidgets import (
     QApplication, QMainWindow, QTableWidget, QTableWidgetItem,
-    QVBoxLayout, QWidget, QPushButton, QHBoxLayout, QLineEdit, QLabel
+    QVBoxLayout, QWidget, QPushButton, QHBoxLayout, QLineEdit, QLabel, QListWidget, QAbstractItemView, QListWidgetItem, QCheckBox
 )
+from PyQt5.QtCore import Qt
+
+
 from PyQt5.QtCore import QTimer
 from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
 import matplotlib.pyplot as plt
@@ -290,18 +293,18 @@ def plot_events(satellites, events, ts, topo, ax=None):
     if not isinstance(events, list):
         events = [events]
 
+    satellite_dict = {sat.name: sat for sat in satellites}
+
     for event in events:
-        sat = [sat for sat in satellites if sat.name == event["satellite"]][0]
-        plot_event(sat, event, ts, topo, ax=ax)
+        sat = satellite_dict.get(event["satellite"])
+        if sat:
+            plot_event(sat, event, ts, topo, ax=ax)
 
     # Add title and legend
     ax.set_title("Satellite Passes in the Sky", va='bottom')
     ax.legend(loc='upper right', bbox_to_anchor=(1.2, 1.05))
-
 class SatelliteApp(QMainWindow):
-
-
-    def __init__(self,ts, config):
+    def __init__(self, ts, config):
         super().__init__()
         self.satellites = []
         self.events = []
@@ -309,8 +312,6 @@ class SatelliteApp(QMainWindow):
         self.ts = ts
         self.topo = Topos(config["lat"], config["lon"])
         self.config = config
-
-
 
         # Main layout
         self.setWindowTitle("spaceboi")
@@ -326,11 +327,14 @@ class SatelliteApp(QMainWindow):
 
         # Add table
         self.table = QTableWidget(0, 4)
-        self.table.setHorizontalHeaderLabels(["Satellite", f"Start Time {self.config["timezone"]}", f"End Time {self.config["timezone"]}", "Max Altitude"])
+        self.table.setHorizontalHeaderLabels(["Satellite", f"Start Time {self.config['timezone']}", f"End Time {self.config['timezone']}", "Max Altitude"])
         left_layout.addWidget(self.table)
-        self.table.itemSelectionChanged.connect(self.on_table_selection_changed)
+        # Min size is 3/4 of the screen height
+        self.table.setMinimumHeight(int(self.height() * 0.75))
 
-        # Add buttons
+
+        self.table.itemSelectionChanged.connect(self.on_table_selection_changed)
+                # Add buttons
         btn_layout = QHBoxLayout()
         
         # Add input to change min altitude
@@ -342,10 +346,39 @@ class SatelliteApp(QMainWindow):
         alt_layout.addWidget(min_altitude_input)
         btn_layout.addLayout(alt_layout)
 
+        hours_layout = QVBoxLayout()
+        hours_input = QLineEdit()
+        hours_input.setPlaceholderText(str(self.config["hours"]))
+        hours_input.textChanged.connect(self.on_hours_changed)
+        hours_layout.addWidget(QLabel("Hours"))
+        hours_layout.addWidget(hours_input)
+        btn_layout.addLayout(hours_layout)
+
         refresh_btn = QPushButton("Refresh Data")
         refresh_btn.clicked.connect(self.refresh_data)
         btn_layout.addWidget(refresh_btn)
         left_layout.addLayout(btn_layout)
+
+        # Add satellite selection list with checkboxes
+        self.sat_list_widget = QListWidget()
+        self.sat_list_widget.setSelectionMode(QAbstractItemView.NoSelection)
+        self.sat_list_widget.itemChanged.connect(self.on_satellite_selection_changed)
+
+        select_sats_layout = QHBoxLayout()
+        select_sats_layout.addWidget(QLabel("Select Satellites:"))
+
+        # Checkbox
+
+        select_sats_layout.addWidget(QLabel("Sats Filter Enabled:"))
+
+        sat_filter_enabled = QCheckBox()
+        sat_filter_enabled.setChecked(self.config["filter_enabled"])
+        sat_filter_enabled.stateChanged.connect(self.on_filter_enabled_changed)
+        select_sats_layout.addWidget(sat_filter_enabled)
+
+        left_layout.addLayout(select_sats_layout)
+
+        left_layout.addWidget(self.sat_list_widget)
 
         # Right layout for plots
         right_layout = QVBoxLayout()
@@ -369,9 +402,10 @@ class SatelliteApp(QMainWindow):
         self.refresh_data()
 
     def refresh_data(self):
-
         self.satellites = []
         self.events = []
+        self.all_sat_names = []
+
         for url in self.config["urls"]:
             text_string = fetchData(url)
             json_sats = json.loads(text_string)
@@ -405,6 +439,8 @@ class SatelliteApp(QMainWindow):
         self.events.sort(key=lambda x: x['startTime'])
         self.refresh_table()
         self.update_current_plot()
+        self.update_sat_list()
+        self.update_single_plot(None)
 
     def refresh_table(self):
         self.table.setRowCount(len(self.events))
@@ -436,10 +472,11 @@ class SatelliteApp(QMainWindow):
         self.canvas.draw()
 
     def update_single_plot(self, event):
+
+        self.single_ax.clear()
         if not event:
             return
         sat = [sat for sat in self.satellites if sat.name == event["satellite"]][0]
-        self.single_ax.clear()
         plot_event(sat, event, self.ts, self.topo, ax=self.single_ax)
         self.single_ax.title.set_text(f"{event['satellite']} Pass - {event['startTime'].astimezone(pytz.timezone('US/Eastern')).strftime('%m/%d - %H:%M:%S')}")
         self.single_canvas.draw()
@@ -457,6 +494,56 @@ class SatelliteApp(QMainWindow):
             self.config["min_alt"] = min_alt
         except ValueError:
             pass
+
+        self.writeConfig()
+
+    def on_hours_changed(self, text):
+        try:
+            hours = int(text)
+            self.config["hours"] = hours
+        except ValueError:
+            pass
+
+        self.writeConfig()
+
+    def on_satellite_selection_changed(self, item):
+        if item.checkState() == Qt.Checked:
+            if item.text() not in self.config["satellites"]:
+                self.config["satellites"].append(item.text())
+        else:
+            if item.text() in self.config["satellites"]:
+                self.config["satellites"].remove(item.text())
+
+        self.writeConfig()
+        self.apply_satellite_filter()
+        self.refresh_table()
+        self.update_current_plot()
+
+    def on_filter_enabled_changed(self, state):
+        self.config["filter_enabled"] = state
+        self.apply_satellite_filter()
+        self.writeConfig()
+
+    def apply_satellite_filter(self):
+        if self.config["filter_enabled"]:
+            self.satellites = [sat for sat in self.satellites if sat.name in self.config["satellites"]]
+
+    def update_sat_list(self):
+        
+        self.all_sat_names.sort()
+        self.sat_list_widget.blockSignals(True)  # Prevent triggering `itemChanged` during setup
+        self.sat_list_widget.clear()
+        for sat_name in self.all_sat_names:
+            item = QListWidgetItem(sat_name)
+            item.setFlags(item.flags() | Qt.ItemIsUserCheckable)
+            item.setCheckState(Qt.Checked if sat_name in self.config["satellites"] else Qt.Unchecked)
+            self.sat_list_widget.addItem(item)
+        self.sat_list_widget.blockSignals(False)
+
+    def writeConfig(self):
+        with open('config.json', 'w') as f:
+            json.dump(self.config, f, indent=4)
+
 
 if __name__ == "__main__":
     
