@@ -33,10 +33,12 @@ def calcPasses(satellite, startTime, hours, topo, minAltitude=0):
     is_new_pass = True
 
     difference = satellite - topo
-    total_minutes = hours * 60  # Total duration in minutes
-
+    
     # Precompute time intervals
-    time_intervals = (startTime + timedelta(minutes=m) for m in range(total_minutes))
+
+    total_minutes = hours * 60  # Total duration in minutes
+    time_intervals = ( startTime + timedelta(seconds=30 * s) for s in range(total_minutes * 2) )
+
 
     for t in time_intervals:
         topocentric = difference.at(t)
@@ -78,6 +80,84 @@ def calcPasses(satellite, startTime, hours, topo, minAltitude=0):
             newPass["maxAlt"] = max(newPass["maxAlt"], alt.degrees)
 
     return passes
+
+
+def calculate_passes(satellite, observer_location, start_time, end_time, minAltitude):
+    ts = load.timescale()
+    t0 = ts.utc(start_time)
+    t1 = ts.utc(end_time)
+    time_intervals = ts.utc_range(t0, t1, 1.0)  # Original time intervals (1-minute resolution)
+
+    difference = satellite - observer_location
+    passes = []
+    newPass = None
+    is_new_pass = True
+
+    for t in time_intervals:
+        topocentric = difference.at(t)
+        alt, az, distance = topocentric.altaz()
+
+        if alt.degrees < 0:
+            # End the current pass if it exists
+            is_new_pass = True
+            if newPass:
+                if newPass["maxAlt"] >= minAltitude:
+                    newPass["endTime"] = newPass["segments"][-1]["time"]
+                    passes.append(newPass)
+                newPass = None
+        else:
+            if is_new_pass:
+                # Start a new pass
+                is_new_pass = False
+                newPass = {
+                    "satellite": satellite.name,
+                    "startTime": t,
+                    "endTime": None,
+                    "maxAlt": -90,
+                    "segments": []
+                }
+
+            # Skip invalid data
+            if math.isnan(alt.degrees) or math.isnan(az.degrees) or math.isnan(distance.km):
+                continue
+
+            # Add segment data to the current pass
+            newPass["segments"].append({
+                "time": t,
+                "alt": round(alt.degrees, 2),
+                "az": round(az.degrees, 2),
+                "distance": round(distance.km, 2)
+            })
+
+            # Update maximum altitude
+            newPass["maxAlt"] = max(newPass["maxAlt"], alt.degrees)
+
+            # Increase resolution within the pass
+            finer_time_intervals = ts.utc_range(t, t + 1.0 / 24.0, 1.0 / 60.0)  # 1-second resolution
+            for finer_t in finer_time_intervals:
+                finer_topocentric = difference.at(finer_t)
+                finer_alt, finer_az, finer_distance = finer_topocentric.altaz()
+
+                if finer_alt.degrees < 0:
+                    break
+
+                # Skip invalid data
+                if math.isnan(finer_alt.degrees) or math.isnan(finer_az.degrees) or math.isnan(finer_distance.km):
+                    continue
+
+                # Add finer segment data to the current pass
+                newPass["segments"].append({
+                    "time": finer_t,
+                    "alt": round(finer_alt.degrees, 2),
+                    "az": round(finer_az.degrees, 2),
+                    "distance": round(finer_distance.km, 2)
+                })
+
+                # Update maximum altitude
+                newPass["maxAlt"] = max(newPass["maxAlt"], finer_alt.degrees)
+
+    return passes
+
 
 def formatPass(satPass, local_tz):
     passString = f"### Pass for {satPass['satellite']}\n"
@@ -225,6 +305,7 @@ class SatelliteApp(QMainWindow):
         super().__init__()
         self.satellites = []
         self.events = []
+        self.all_sat_names = []
         self.ts = ts
         self.topo = Topos(config["lat"], config["lon"])
         self.config = config
@@ -290,6 +371,7 @@ class SatelliteApp(QMainWindow):
     def refresh_data(self):
 
         self.satellites = []
+        self.events = []
         for url in self.config["urls"]:
             text_string = fetchData(url)
             json_sats = json.loads(text_string)
@@ -303,9 +385,8 @@ class SatelliteApp(QMainWindow):
 
                 if esat.name not in [sat.name for sat in self.satellites]:
                     self.satellites.append(EarthSatellite.from_omm(self.ts, sat))
+                    self.all_sat_names.append(self.satellites[-1].name)
                     print(self.satellites[-1].name)
-
-
 
         if self.config["filter_enabled"]:
             # Filter satellites
