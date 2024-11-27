@@ -1,3 +1,5 @@
+![spaceboi](cover.png)
+
 # Install
 
 ```bash
