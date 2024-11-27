@@ -537,11 +537,8 @@ def fetchAllData(config):
         esat = EarthSatellite.from_omm(ts, sat)
 
         # search for esat.name in satellites
-
-        if esat.name not in [sat.name for sat in satellites]:
-
-         all_sats.append(EarthSatellite.from_omm(ts, sat))
-
+        if esat.name not in [sat.name for sat in all_sats]:
+          all_sats.append(EarthSatellite.from_omm(ts, sat))
 
 
   filtered_sats = all_sats
@@ -571,6 +568,8 @@ if __name__ == "__main__":
   parser.add_argument('--timezone', type=str, required=False, help='Timezone of the observer')
   parser.add_argument('--config', type=str, required=False, help='Configuration file', default='config.json')
 
+  parser.add_argument('--satellites', type=str, nargs='+', required=False, help='Satellites to filter')
+
   args = parser.parse_args()
 
   with open(args.config, 'r') as f:
@@ -583,7 +582,7 @@ if __name__ == "__main__":
 
   if args.mode == 'plot':
     topo = Topos(config["lat"], config["lon"])
-    satellites = fetchAllData(config)
+    satellites, all_sats = fetchAllData(config)
     events = []
     for sat in satellites:
       events.extend(calcPasses(sat, t, config["hours"], topo, config["min_alt"]))
@@ -609,7 +608,7 @@ if __name__ == "__main__":
 
     t = ts.now()
     topo = Topos(config["lat"], config["lon"])
-    satellites = fetchAllData(config)
+    satellites, all_sats = fetchAllData(config)
     events = []
     for sat in satellites:
       events.extend(calcPasses(sat, t, config["hours"], topo, config["min_alt"]))
