@@ -56,7 +56,6 @@ Example config.json
 - hours: number of hours ahead to predict
 - mode: the default mode to run the program in
 - config: the path to the config file
-```
 
 # Usage
 
