@@ -7,13 +7,14 @@ import json
 import requests
 from io import BytesIO
 import concurrent.futures
+import argparse
 
 import sys
 from PyQt5.QtWidgets import (
     QApplication, QMainWindow, QTableWidget, QTableWidgetItem,
     QVBoxLayout, QWidget, QPushButton, QHBoxLayout, QLineEdit, QLabel, QListWidget, QAbstractItemView, QListWidgetItem, QCheckBox
 )
-from PyQt5.QtCore import Qt
+from PyQt5.QtCore import ( Qt, QRunnable, QThreadPool, pyqtSlot, pyqtSignal, QObject )
 
 
 from PyQt5.QtCore import QTimer
@@ -29,135 +30,49 @@ from skyfield.api import Topos, load, EarthSatellite
 
 def calcPasses(satellite, startTime, hours, topo, minAltitude=0):
     from itertools import islice
+    from datetime import timedelta
+    import math
 
     print(f"Calculating passes for {satellite.name}")
     passes = []
     newPass = None
-    is_new_pass = True
 
     difference = satellite - topo
-    
-    # Precompute time intervals
-
-    total_minutes = hours * 60  # Total duration in minutes
-    time_intervals = ( startTime + timedelta(seconds=30 * s) for s in range(total_minutes * 2) )
-
+    total_minutes = hours * 60
+    time_intervals = (startTime + timedelta(seconds=30 * s) for s in range(total_minutes * 2))
 
     for t in time_intervals:
         topocentric = difference.at(t)
         alt, az, distance = topocentric.altaz()
 
-        if alt.degrees < 0:
-            # End the current pass if it exists
-            is_new_pass = True
+        if math.isnan(alt.degrees) or alt.degrees < 0:
             if newPass:
                 if newPass["maxAlt"] >= minAltitude:
                     newPass["endTime"] = newPass["segments"][-1]["time"]
                     passes.append(newPass)
                 newPass = None
-        else:
-            if is_new_pass:
-                # Start a new pass
-                is_new_pass = False
-                newPass = {
-                    "satellite": satellite.name,
-                    "startTime": t,
-                    "endTime": None,
-                    "maxAlt": -90,
-                    "segments": []
-                }
+            continue
 
-            # Skip invalid data
-            if math.isnan(alt.degrees) or math.isnan(az.degrees) or math.isnan(distance.km):
-                continue
+        if not newPass:
+            newPass = {
+                "satellite": satellite.name,
+                "startTime": t,
+                "endTime": None,
+                "maxAlt": -90,
+                "segments": []
+            }
 
-            # Add segment data to the current pass
-            newPass["segments"].append({
-                "time": t,
-                "alt": round(alt.degrees, 2),
-                "az": round(az.degrees, 2),
-                "distance": round(distance.km, 2)
-            })
+        newPass["segments"].append({
+            "time": t,
+            "alt": round(alt.degrees, 2),
+            "az": round(az.degrees, 2),
+            "distance": round(distance.km, 2)
+        })
+        newPass["maxAlt"] = max(newPass["maxAlt"], alt.degrees)
 
-            # Update maximum altitude
-            newPass["maxAlt"] = max(newPass["maxAlt"], alt.degrees)
-
-    return passes
-
-
-def calculate_passes(satellite, observer_location, start_time, end_time, minAltitude):
-    ts = load.timescale()
-    t0 = ts.utc(start_time)
-    t1 = ts.utc(end_time)
-    time_intervals = ts.utc_range(t0, t1, 1.0)  # Original time intervals (1-minute resolution)
-
-    difference = satellite - observer_location
-    passes = []
-    newPass = None
-    is_new_pass = True
-
-    for t in time_intervals:
-        topocentric = difference.at(t)
-        alt, az, distance = topocentric.altaz()
-
-        if alt.degrees < 0:
-            # End the current pass if it exists
-            is_new_pass = True
-            if newPass:
-                if newPass["maxAlt"] >= minAltitude:
-                    newPass["endTime"] = newPass["segments"][-1]["time"]
-                    passes.append(newPass)
-                newPass = None
-        else:
-            if is_new_pass:
-                # Start a new pass
-                is_new_pass = False
-                newPass = {
-                    "satellite": satellite.name,
-                    "startTime": t,
-                    "endTime": None,
-                    "maxAlt": -90,
-                    "segments": []
-                }
-
-            # Skip invalid data
-            if math.isnan(alt.degrees) or math.isnan(az.degrees) or math.isnan(distance.km):
-                continue
-
-            # Add segment data to the current pass
-            newPass["segments"].append({
-                "time": t,
-                "alt": round(alt.degrees, 2),
-                "az": round(az.degrees, 2),
-                "distance": round(distance.km, 2)
-            })
-
-            # Update maximum altitude
-            newPass["maxAlt"] = max(newPass["maxAlt"], alt.degrees)
-
-            # Increase resolution within the pass
-            finer_time_intervals = ts.utc_range(t, t + 1.0 / 24.0, 1.0 / 60.0)  # 1-second resolution
-            for finer_t in finer_time_intervals:
-                finer_topocentric = difference.at(finer_t)
-                finer_alt, finer_az, finer_distance = finer_topocentric.altaz()
-
-                if finer_alt.degrees < 0:
-                    break
-
-                # Skip invalid data
-                if math.isnan(finer_alt.degrees) or math.isnan(finer_az.degrees) or math.isnan(finer_distance.km):
-                    continue
-
-                # Add finer segment data to the current pass
-                newPass["segments"].append({
-                    "time": finer_t,
-                    "alt": round(finer_alt.degrees, 2),
-                    "az": round(finer_az.degrees, 2),
-                    "distance": round(finer_distance.km, 2)
-                })
-
-                # Update maximum altitude
-                newPass["maxAlt"] = max(newPass["maxAlt"], finer_alt.degrees)
+    if newPass and newPass["maxAlt"] >= minAltitude:
+        newPass["endTime"] = newPass["segments"][-1]["time"]
+        passes.append(newPass)
 
     return passes
 
@@ -176,45 +91,6 @@ def formatPass(satPass, local_tz):
     
     return passString
 
-def fetchData(url):
-
-    # hash the url to get a unique filename
-    hsh = hashlib.md5(url.encode()).hexdigest()
-
-    # check if directory exists
-    if not os.path.exists('./tle'):
-        os.makedirs('./tle')
-
-    # check if file exists
-    text_string = None
-
-    refresh = False
-
-    if os.path.exists(f'./tle/{hsh}.txt'):
-        # check if file is older than 1 day
-        if (time.time() - os.path.getmtime(f'./tle/{hsh}.txt')) > 86400:
-            # file is older than 1 day, refresh
-            refresh = True
-            
-
-        else:
-            # file is not older than 1 day, load from file
-            with open(f'./tle/{hsh}.txt', 'r') as f:
-                text_string = f.read()
-
-    else:
-        # file does not exist, refresh
-        refresh = True
-
-    if refresh:
-         response = requests.get(url)
-         text_string = response.content
-         text_string = text_string.decode('utf-8')
-
-         with open(f'./tle/{hsh}.txt', 'w') as f:
-             f.write(text_string)
-
-    return text_string
 
 def plot_event(satellite, event, ts, topo, ax=None):
     """
@@ -303,12 +179,60 @@ def plot_events(satellites, events, ts, topo, ax=None):
     # Add title and legend
     ax.set_title("Satellite Passes in the Sky", va='bottom')
     ax.legend(loc='upper right', bbox_to_anchor=(1.2, 1.05))
+
+class WorkerSignals(QObject):
+    finished = pyqtSignal(dict)  # Emit list of satellites
+    error = pyqtSignal(str)      # Emit error message as a string
+
+class Worker(QRunnable):
+    def __init__(self, urls, ts, config, filter_enabled):
+        super().__init__()
+        self.urls = urls
+        self.ts = ts
+        self.config = config
+        self.filter_enabled = filter_enabled
+        self.signals = WorkerSignals()
+        self._is_running = True
+
+    def stop(self):
+        self._is_running = False
+
+    @pyqtSlot()
+    def run(self):
+        try:
+            filtered_satellites, satellites = fetchAllData(self.config)
+            events = []
+            topo = Topos(self.config["lat"], self.config["lon"])
+
+
+            for sat in filtered_satellites:
+                if not self._is_running:
+                    return
+
+                events.extend(
+                  calcPasses(sat, self.ts.now(), self.config["hours"], topo, minAltitude=self.config["min_alt"])
+                )
+
+
+            events.sort(key=lambda x: x['startTime'])
+
+            self.signals.finished.emit( {
+                "satellites": satellites,
+                "events": events,
+                "all_sat_names": [sat.name for sat in satellites]
+            })
+
+        except Exception as e:
+            self.signals.error.emit(str(e))  # Emit the error message
+
 class SatelliteApp(QMainWindow):
     def __init__(self, ts, config):
         super().__init__()
+        self.thread_pool = QThreadPool()
         self.satellites = []
         self.events = []
         self.all_sat_names = []
+        self.active_workers = []
         self.ts = ts
         self.topo = Topos(config["lat"], config["lon"])
         self.config = config
@@ -329,16 +253,15 @@ class SatelliteApp(QMainWindow):
         self.table = QTableWidget(0, 4)
         self.table.setHorizontalHeaderLabels(["Satellite", f"Start Time {self.config['timezone']}", f"End Time {self.config['timezone']}", "Max Altitude"])
         left_layout.addWidget(self.table)
-        # Min size is 3/4 of the screen height
-        self.table.setMinimumHeight(int(self.height() * 0.75))
-
-
         self.table.itemSelectionChanged.connect(self.on_table_selection_changed)
-                # Add buttons
-        btn_layout = QHBoxLayout()
+
+
+        config_layout = QHBoxLayout()
+        # Add buttons
+        btn_layout = QVBoxLayout()
         
         # Add input to change min altitude
-        alt_layout = QVBoxLayout()
+        alt_layout = QHBoxLayout()
         min_altitude_input = QLineEdit()
         min_altitude_input.setPlaceholderText(str(self.config["min_alt"]))
         min_altitude_input.textChanged.connect(self.on_min_altitude_changed)
@@ -346,7 +269,7 @@ class SatelliteApp(QMainWindow):
         alt_layout.addWidget(min_altitude_input)
         btn_layout.addLayout(alt_layout)
 
-        hours_layout = QVBoxLayout()
+        hours_layout = QHBoxLayout()
         hours_input = QLineEdit()
         hours_input.setPlaceholderText(str(self.config["hours"]))
         hours_input.textChanged.connect(self.on_hours_changed)
@@ -357,9 +280,11 @@ class SatelliteApp(QMainWindow):
         refresh_btn = QPushButton("Refresh Data")
         refresh_btn.clicked.connect(self.refresh_data)
         btn_layout.addWidget(refresh_btn)
-        left_layout.addLayout(btn_layout)
+        config_layout.addLayout(btn_layout)
 
         # Add satellite selection list with checkboxes
+        sat_list_layout = QVBoxLayout()
+
         self.sat_list_widget = QListWidget()
         self.sat_list_widget.setSelectionMode(QAbstractItemView.NoSelection)
         self.sat_list_widget.itemChanged.connect(self.on_satellite_selection_changed)
@@ -368,7 +293,6 @@ class SatelliteApp(QMainWindow):
         select_sats_layout.addWidget(QLabel("Select Satellites:"))
 
         # Checkbox
-
         select_sats_layout.addWidget(QLabel("Sats Filter Enabled:"))
 
         sat_filter_enabled = QCheckBox()
@@ -376,9 +300,11 @@ class SatelliteApp(QMainWindow):
         sat_filter_enabled.stateChanged.connect(self.on_filter_enabled_changed)
         select_sats_layout.addWidget(sat_filter_enabled)
 
-        left_layout.addLayout(select_sats_layout)
+        sat_list_layout.addLayout(select_sats_layout)
+        sat_list_layout.addWidget(self.sat_list_widget)
+        config_layout.addLayout(sat_list_layout)
 
-        left_layout.addWidget(self.sat_list_widget)
+        left_layout.addLayout(config_layout)
 
         # Right layout for plots
         right_layout = QVBoxLayout()
@@ -401,46 +327,48 @@ class SatelliteApp(QMainWindow):
 
         self.refresh_data()
 
-    def refresh_data(self):
-        self.satellites = []
-        self.events = []
-        self.all_sat_names = []
-
-        for url in self.config["urls"]:
-            text_string = fetchData(url)
-            json_sats = json.loads(text_string)
-
-            for sat in json_sats:
-                # Check not already appended
-                # TODO Fix this
-                esat = EarthSatellite.from_omm(self.ts, sat)
-
-                # search for esat.name in satellites
-
-                if esat.name not in [sat.name for sat in self.satellites]:
-                    self.satellites.append(EarthSatellite.from_omm(self.ts, sat))
-                    self.all_sat_names.append(self.satellites[-1].name)
-                    print(self.satellites[-1].name)
-
-        if self.config["filter_enabled"]:
-            # Filter satellites
-            filtered_sats = []
-
-            for sat in self.satellites:
-                if sat.name in self.config["satellites"]:
-                    filtered_sats.append(sat)
-            print("Filtered satellites: %d" % len(filtered_sats))
-            self.satellites = filtered_sats
-
+    def closeEvent(self, event):
+        self.stop_all_workers()
         
-        for sat in self.satellites:
-            self.events.extend(calcPasses(sat, self.ts.now(), self.config["hours"], self.topo, minAltitude=config["min_alt"]))
+        self.timer.stop()
+        self.thread_pool.clear()
+        event.accept()
 
-        self.events.sort(key=lambda x: x['startTime'])
+
+    def refresh_data(self):
+
+         self.stop_all_workers()
+         self.table.setDisabled(True)  # Disable UI while refreshing
+
+         worker = Worker(self.config["urls"], self.ts, self.config, self.config["filter_enabled"])
+         worker.signals.finished.connect(self.on_refresh_data_finished)
+         worker.signals.error.connect(self.on_refresh_data_error)
+
+         self.active_workers.append(worker)
+
+         self.thread_pool.start(worker)
+
+    def on_refresh_data_finished(self, result):
+
+        self.satellites = result["satellites"]
+        self.events = result["events"]
+        self.all_sat_names = result["all_sat_names"]
+
+        self.table.setDisabled(False)  # Re-enable UI
+        print("Data refreshed with %d satellites" % len(self.satellites))
+        
         self.refresh_table()
         self.update_current_plot()
         self.update_sat_list()
         self.update_single_plot(None)
+
+    def on_refresh_data_error(self, error_message):
+        self.table.setDisabled(False)  # Re-enable UI even on error
+        print(f"Error refreshing data: {error_message}")
+
+    def stop_all_workers(self):
+        for worker in self.active_workers:
+            worker.stop()
 
     def refresh_table(self):
         self.table.setRowCount(len(self.events))
@@ -476,7 +404,14 @@ class SatelliteApp(QMainWindow):
         self.single_ax.clear()
         if not event:
             return
-        sat = [sat for sat in self.satellites if sat.name == event["satellite"]][0]
+
+        try:
+          sat = [sat for sat in self.satellites if sat.name == event["satellite"]][0]
+        except IndexError:
+            print(f"Satellite {event['satellite']} not found")
+            print(self.satellites)
+            return
+
         plot_event(sat, event, self.ts, self.topo, ax=self.single_ax)
         self.single_ax.title.set_text(f"{event['satellite']} Pass - {event['startTime'].astimezone(pytz.timezone('US/Eastern')).strftime('%m/%d - %H:%M:%S')}")
         self.single_canvas.draw()
@@ -544,89 +479,144 @@ class SatelliteApp(QMainWindow):
         with open('config.json', 'w') as f:
             json.dump(self.config, f, indent=4)
 
+def fetchData(url):
+
+    # hash the url to get a unique filename
+    hsh = hashlib.md5(url.encode()).hexdigest()
+
+    # check if directory exists
+    if not os.path.exists('./tle'):
+        os.makedirs('./tle')
+
+    # check if file exists
+    text_string = None
+
+    refresh = False
+
+    if os.path.exists(f'./tle/{hsh}.txt'):
+        # check if file is older than 1 day
+        if (time.time() - os.path.getmtime(f'./tle/{hsh}.txt')) > 86400:
+            # file is older than 1 day, refresh
+            refresh = True
+            
+
+        else:
+            # file is not older than 1 day, load from file
+            with open(f'./tle/{hsh}.txt', 'r') as f:
+                text_string = f.read()
+
+    else:
+        # file does not exist, refresh
+        refresh = True
+
+    if refresh:
+         response = requests.get(url)
+         text_string = response.content
+         text_string = text_string.decode('utf-8')
+
+         with open(f'./tle/{hsh}.txt', 'w') as f:
+             f.write(text_string)
+
+    return text_string
+
+def fetchAllData(config):
+  satellites = []
+  all_sats = []
+
+  for url in config["urls"]:
+    # Get the json data from the URL
+
+    text_string = fetchData(url)
+    json_sats = json.loads(text_string)
+
+
+
+    for sat in json_sats:
+        # Check not already appended
+        # TODO Fix this
+        esat = EarthSatellite.from_omm(ts, sat)
+
+        # search for esat.name in satellites
+
+        if esat.name not in [sat.name for sat in satellites]:
+
+         all_sats.append(EarthSatellite.from_omm(ts, sat))
+
+
+
+  filtered_sats = all_sats
+
+  if config["filter_enabled"]:
+      filtered_sats = [sat for sat in all_sats if sat.name in config["satellites"]]
+
+  print(f"Found {len(satellites)} satellites. Using {len(satellites)}/{len(filtered_sats)}")
+
+  return filtered_sats, all_sats
 
 if __name__ == "__main__":
     
+  config  = None
   ts = load.timescale()
-  t = ts.now()
-  
   i, refreshed, sat_list = 0, False, []
 
-  config  = None
-  with open('config.json', 'r') as f:
+  parser = argparse.ArgumentParser(description='spaceboi')
+
+  parser.add_argument('mode', type=str, choices=['gui', 'plot', 'cli'], default='cli', help='Mode to run the program in')
+  parser.add_argument('--lat', type=float, required=False, help='Latitude of the observer')
+  parser.add_argument('--lon', type=float, required=False, help='Longitude of the observer')
+  parser.add_argument('--min_alt', type=int, required=False, help='Minimum altitude of the satellite')
+  parser.add_argument('--hours', type=int, required=False, help='Number of hours to calculate passes')
+  parser.add_argument('--satellites', type=str, nargs='+', required=False, help='Satellites to filter')
+  parser.add_argument('--filter_enabled', action='store_true', help='Filter satellites')
+  parser.add_argument('--timezone', type=str, required=False, help='Timezone of the observer')
+  parser.add_argument('--config', type=str, required=False, help='Configuration file', default='config.json')
+
+  args = parser.parse_args()
+
+  with open(args.config, 'r') as f:
     config = json.load(f)
     print(config.keys())
-  #my_topo = Topos(config["lat"], config["lon"])
 
-  #satellites = []
-  #for url in config["urls"]:
-  #  # Get the json data from the URL
+  for key, value in vars(args).items():
+    if value:
+      config[key] = value
 
-  #  text_string = fetchData(url)
-  #  json_sats = json.loads(text_string)
+  if args.mode == 'plot':
+    topo = Topos(config["lat"], config["lon"])
+    satellites = fetchAllData(config)
+    events = []
+    for sat in satellites:
+      events.extend(calcPasses(sat, t, config["hours"], topo, config["min_alt"]))
 
-  #  for sat in json_sats:
-  #      # Check not already appended
-  #      # TODO Fix this
-  #      esat = EarthSatellite.from_omm(ts, sat)
+    # Sort by time
 
-  #      # search for esat.name in satellites
+    events.sort(key=lambda x: x['startTime'])
 
-  #      if esat.name not in [sat.name for sat in satellites]:
-  #       satellites.append(EarthSatellite.from_omm(ts, sat))
-  #       print(satellites[-1].name)
+    fig = plt.figure()
+    ax = fig.add_subplot(111, polar=True)
+    plot_events(satellites, events, ts, my_topo, ax=ax)
+    plt.show()
+    plt.close(fig)
 
-  #print("Total satellites: %d" % len(satellites))
+  elif args.mode == 'gui':
+    app = QApplication(sys.argv)
+    # Assuming satellites, events, ts, and my_topo are already initialized
+    window = SatelliteApp(ts, config)
+    window.show()
+    sys.exit(app.exec_())
 
-  #if config["filter_enabled"]:
-  #  # Filter satellites
-  #  filtered_sats = []
-  #  for sat in satellites:
-  #      if sat.name in config["satellites"]:
-  #          filtered_sats.append(sat)
+  elif args.mode == 'cli':
 
-  #  print("Filtered satellites: %d" % len(filtered_sats))
+    t = ts.now()
+    topo = Topos(config["lat"], config["lon"])
+    satellites = fetchAllData(config)
+    events = []
+    for sat in satellites:
+      events.extend(calcPasses(sat, t, config["hours"], topo, config["min_alt"]))
 
-  #  satellites = filtered_sats
+    # Sort by time
 
-  #
+    events.sort(key=lambda x: x['startTime'])
 
-  #events = []
-
-  #time_start = time.time()
-  #for sat in satellites:
-  #  events.extend(calcPasses(sat, t, config["hours"], my_topo, config["min_alt"]))
-
-  #print(f"Total passes: {len(events)} calculated in {time.time() - time_start:.2f} seconds")
-
-  ## Sort by max altitude
-
-  #events.sort(key=lambda x: x['maxAlt'], reverse=True)
-
-  #with open('output_alt.md', 'w') as f:
-  #    for event in events:
-  #        f.write(formatPass(event, pytz.timezone('US/Eastern')))
-  #        f.write("\n")
-
-  # Sort by time
-
-  #events.sort(key=lambda x: x['startTime'])
-
-  #with open('output_time.md', 'w') as f:
-  #    for event in events:
-  #        f.write(formatPass(event, pytz.timezone('US/Eastern')))
-  #        f.write("\n")
-
-  #fig = plt.figure()
-  #ax = fig.add_subplot(111, polar=True)
-  #ani = FuncAnimation(fig, update_plot, fargs=(satellites, events, ts, ax), interval=1000, cache_frame_data=False)
-
-  #plt.show()
-  #plt.close(fig)
-
-
-  app = QApplication(sys.argv)
-  # Assuming satellites, events, ts, and my_topo are already initialized
-  window = SatelliteApp(ts, config)
-  window.show()
-  sys.exit(app.exec_())
+    for event in events:
+        print(formatPass(event, pytz.timezone('US/Eastern')))
