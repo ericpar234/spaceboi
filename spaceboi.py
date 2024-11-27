@@ -415,7 +415,6 @@ class SatelliteApp(QMainWindow):
         plot_event(sat, event, self.ts, self.topo, ax=self.single_ax)
         self.single_ax.title.set_text(f"{event['satellite']} Pass - {event['startTime'].astimezone(pytz.timezone('US/Eastern')).strftime('%m/%d - %H:%M:%S')}")
         self.single_canvas.draw()
-
     def on_table_selection_changed(self):
         selected_items = self.table.selectedItems()
         if selected_items:
@@ -568,7 +567,6 @@ if __name__ == "__main__":
   parser.add_argument('--timezone', type=str, required=False, help='Timezone of the observer')
   parser.add_argument('--config', type=str, required=False, help='Configuration file', default='config.json')
 
-  parser.add_argument('--satellites', type=str, nargs='+', required=False, help='Satellites to filter')
 
   args = parser.parse_args()
 
