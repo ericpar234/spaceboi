@@ -1,5 +1,15 @@
 ![spaceboi](cover.png)
 
+
+# Spaceboi
+
+Spaceboi gives you the sat events. Period.
+
+A simple satellite pass predictor using TLE data from celestrak.org. It can be
+run in a GUI mode or CLI mode. The GUI mode uses Qt to display the passes in a
+table, and graph the current events. The CLI mode prints the passes to the
+console. The passes can also be plotted using the plot mode.
+
 # Install
 
 ```bash
@@ -14,9 +24,7 @@ Example config.json
 {
     "urls": [
         "https://celestrak.org/NORAD/elements/gp.php?GROUP=weather&FORMAT=json",
-# or
         "https://celestrak.org/NORAD/elements/gp.php?GROUP=amateur&FORMAT=json",
-        "https://celestrak.org/NORAD/elements/gp.php?GROUP=satnogs&FORMAT=json"
     ],
     "lat": 40.7128,
     "lon": -74.006,
@@ -36,6 +44,7 @@ Example config.json
     "mode": "gui",
     "config": "config.json"
 }
+```
 
 - urls: list of urls to fetch TLE data from. For now JSON format is supported
 - lat: latitude of observer
