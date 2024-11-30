@@ -383,7 +383,7 @@ class SatelliteApp(QMainWindow):
         main_layout.addLayout(left_layout)
 
         # Add map plot
-        self.fig_map, self.ax_map = plt.subplots(figsize=(12, 7))
+        self.fig_map, self.ax_map = plt.subplots(figsize=(12, 6))
         self.canvas_map = FigureCanvas(self.fig_map)
         self.map = initialize_map(self.ax_map)
         left_layout.addWidget(self.canvas_map)
@@ -405,6 +405,7 @@ class SatelliteApp(QMainWindow):
         min_altitude_input = QLineEdit()
         min_altitude_input.setPlaceholderText(str(self.config["min_alt"]))
         min_altitude_input.textChanged.connect(self.on_min_altitude_changed)
+        min_altitude_input.setMaximumWidth(100)
         alt_layout.addWidget(QLabel("Min Altitude"))
         alt_layout.addWidget(min_altitude_input)
         config_layout.addLayout(alt_layout)
@@ -413,6 +414,7 @@ class SatelliteApp(QMainWindow):
         hours_input = QLineEdit()
         hours_input.setPlaceholderText(str(self.config["hours"]))
         hours_input.textChanged.connect(self.on_hours_changed)
+        hours_input.setMaximumWidth(100)
         hours_layout.addWidget(QLabel("Hours"))
         hours_layout.addWidget(hours_input)
         config_layout.addLayout(hours_layout)
@@ -436,7 +438,7 @@ class SatelliteApp(QMainWindow):
         sat_list_layout.addWidget(self.sat_list_widget)
         config_layout.addLayout(sat_list_layout)
 
-        refresh_btn = QPushButton("Refresh Data")
+        refresh_btn = QPushButton("Refresh Passes")
         refresh_btn.clicked.connect(self.refresh_data)
         config_layout.addWidget(refresh_btn)
 
@@ -461,6 +463,11 @@ class SatelliteApp(QMainWindow):
         self.single_fig, self.single_ax = plt.subplots(subplot_kw={'projection': 'polar'})
         self.single_canvas = FigureCanvas(self.single_fig)
         right_layout.addWidget(self.single_canvas)
+        self.single_ax.text(0, 0, "Select a pass to view", horizontalalignment='center', verticalalignment='center', fontsize=24)
+        self.single_ax.set_xticks([])
+        self.single_ax.set_yticks([])
+        self.single_ax.spines['polar'].set_visible(False)
+
 
         # Timer for updating plot
         self.timer = QTimer(self)
@@ -501,7 +508,7 @@ class SatelliteApp(QMainWindow):
         self.all_sat_names = result["all_sat_names"]
 
         self.table.setDisabled(False)  # Re-enable UI
-        print("Data refreshed with %d satellites" % len(self.satellites))
+        print(f"Refreshed {len(self.satellites)} satellites. Found {len(self.events)} passes.")
         
         self.refresh_table()
         self.update_current_plot()
@@ -790,7 +797,6 @@ def fetchData(url):
     return text_string
 
 def fetchAllData(config, ts):
-  satellites = []
   all_sats = []
 
   for url in config["urls"]:
@@ -816,9 +822,38 @@ def fetchAllData(config, ts):
   if config["filter_enabled"]:
       filtered_sats = [sat for sat in all_sats if sat.name in config["satellites"]]
 
-  print(f"Found {len(satellites)} satellites. Using {len(satellites)}/{len(filtered_sats)}")
+  print(f"Found {len(all_sats)} satellites. Using {len(filtered_sats)}/{len(all_sats)}")
 
   return filtered_sats, all_sats
+
+DEFAULT_CONFIG  = {
+    "urls": [
+        "https://celestrak.org/NORAD/elements/gp.php?GROUP=weather&FORMAT=json",
+        "https://celestrak.org/NORAD/elements/gp.php?GROUP=amateur&FORMAT=json"
+    ],
+    "lat": 40.7128,
+    "lon": -74.006,
+    "timezone": "America/New_York",
+    "filter_enabled": 2,
+    "satellites": [
+        "NOAA 15",
+        "NOAA 18",
+        "NOAA 19",
+        "METEOR-M2 2",
+        "METEOR-M2 3",
+        "ISS (ZARYA)",
+        "SONATE-2",
+        "NOAA 20 (JPSS-1)",
+        "NOAA 21 (JPSS-2)",
+        "FOX-1A (AO-85)",
+        "FOX-1CLIFF (AO-95)",
+        "FUNCUBE-1 (AO-73)"
+    ],
+    "min_alt": 30,
+    "hours": 36,
+    "mode": "gui",
+    "config": "~/.config/spaceboi/config.json"
+}
 
 def main(mode='gui'):
     
@@ -836,14 +871,22 @@ def main(mode='gui'):
   parser.add_argument('--satellites', type=str, nargs='+', required=False, help='Satellites to filter')
   parser.add_argument('--filter_enabled', action='store_true', help='Filter satellites')
   parser.add_argument('--timezone', type=str, required=False, help='Timezone of the observer')
-  parser.add_argument('--config', type=str, required=False, help='Configuration file', default='config.json')
+  parser.add_argument('--config', type=str, required=False, help='Configuration file', default='~/.config/spaceboi/config.json')
 
 
   args = parser.parse_args()
 
+  if not os.path.exists(args.config):
+    print(f"Configuration file {args.config} not found")
+    print(f"Creating default configuration at {args.config}")
+
+    os.makedirs(os.path.dirname(args.config), exist_ok=True)
+    with open(args.config, 'w') as f:
+        json.dump(DEFAULT_CONFIG, f, indent=4)
+
   with open(args.config, 'r') as f:
+    print(f"Loading configuration from {args.config}")
     config = json.load(f)
-    print(config.keys())
 
   for key, value in vars(args).items():
     if value:

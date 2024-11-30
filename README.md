@@ -28,6 +28,10 @@ pip install spaceboi
 
 # Configuration
 
+The config file by default is stored in ~/.config/spaceboi/config.json. The GUI
+settings will automatically be saved to this file. The config file can also be
+manually specified using the --config option.
+
 Example config.json
 ```json
 {
