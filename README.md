@@ -12,8 +12,17 @@ console. The passes can also be plotted using the plot mode.
 
 # Install
 
+Clone the repo and install the requirements
+
 ```bash
 pip install -r requirements.txt
+```
+
+or 
+
+Install from pypi
+```
+pip install spaceboi
 ```
 
 
