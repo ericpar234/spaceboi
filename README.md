@@ -1,4 +1,4 @@
-![spaceboi](https://github.com/ericpar234/spaceboi/cover.png)
+![spaceboi](cover.png)
 
 
 # Spaceboi
