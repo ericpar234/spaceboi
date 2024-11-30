@@ -1,9 +1,9 @@
 ![spaceboi](cover.png)
 
 
-# Spaceboi
+# spaceboi
 
-Spaceboi gives you the sat events. Period.
+spaceboi gives you the sat events. Period.
 
 A simple satellite pass predictor using TLE data from celestrak.org. It can be
 run in a GUI mode or CLI mode. The GUI mode uses Qt to display the passes in a
