@@ -1,0 +1,9 @@
+[Desktop Entry]
+Version=1.0
+Type=Application
+Name=Spaceboi
+Comment=A satellite tracking application
+Exec=bash -c 'source /path/to/venv/bin/activate && python3 -m spaceboi --mode gui'
+Icon=/path/to/icon/spaceboi_small.png
+Terminal=false
+Categories=Education;Science;

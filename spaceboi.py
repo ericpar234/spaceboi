@@ -15,7 +15,8 @@ from PyQt5.QtWidgets import (
     QApplication, QMainWindow, QTableWidget, QTableWidgetItem,
     QVBoxLayout, QWidget, QPushButton, QHBoxLayout, QLineEdit, QLabel, QListWidget, QAbstractItemView, QListWidgetItem, QCheckBox, QSizePolicy
 )
-from PyQt5.QtCore import ( Qt, QRunnable, QThreadPool, pyqtSlot, pyqtSignal, QObject )
+from PyQt5.QtCore import ( Qt, QRunnable, QThreadPool, pyqtSlot, pyqtSignal, QObject)
+from PyQt5.QtGui import QIcon
 
 
 from PyQt5.QtCore import QTimer
@@ -365,6 +366,8 @@ class SatelliteApp(QMainWindow):
         self.topo = Topos(config["lat"], config["lon"])
         self.config = config
         self.selected_sat = None
+
+        self.setWindowIcon(QIcon(os.path.join( os.path.curdir, 'assets/spaceboi_small.png' )))
 
         #if darkdetect.isDark():
         #    self.setStyleSheet(dark_stylesheet)
