@@ -6,17 +6,21 @@
     "lat": 40.7128,
     "lon": -74.006,
     "timezone": "America/New_York",
-    "filter_enabled": 0,
+    "filter_enabled": 2,
     "satellites": [
         "NOAA 15",
         "NOAA 18",
         "NOAA 19",
         "METEOR-M2 2",
         "METEOR-M2 3",
-        "ISS (ZARYA)"
+        "ISS (ZARYA)",
+        "SONATE-2",
+        "NOAA 20 (JPSS-1)",
+        "NOAA 21 (JPSS-2)",
+        "GOES 19"
     ],
-    "min_alt": 20,
-    "hours": 1,
+    "min_alt": 70,
+    "hours": 36,
     "mode": "gui",
     "config": "config.json"
 }

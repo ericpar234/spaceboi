@@ -25,54 +25,161 @@ import numpy as np
 import matplotlib.pyplot as plt
 from matplotlib.animation import FuncAnimation
 import pytz
+from mpl_toolkits.basemap import Basemap
 
 from skyfield.api import Topos, load, EarthSatellite
 
 def calcPasses(satellite, startTime, hours, topo, minAltitude=0):
-    from itertools import islice
-    from datetime import timedelta
-    import math
-
-    print(f"Calculating passes for {satellite.name}")
-    passes = []
-    newPass = None
-
+    ts = load.timescale()
+    endTime = startTime + timedelta(hours=hours)
+    
+    t0 = startTime
+    t1 = startTime + timedelta(hours=hours)
+    
     difference = satellite - topo
-    total_minutes = hours * 60
-    time_intervals = (startTime + timedelta(seconds=30 * s) for s in range(total_minutes * 2))
+    events = satellite.find_events(topo, t0, t1, altitude_degrees=0)
 
-    for t in time_intervals:
-        topocentric = difference.at(t)
-        alt, az, distance = topocentric.altaz()
 
-        if math.isnan(alt.degrees) or alt.degrees < 0:
-            if newPass:
-                if newPass["maxAlt"] >= minAltitude:
-                    newPass["endTime"] = newPass["segments"][-1]["time"]
-                    passes.append(newPass)
-                newPass = None
-            continue
+    # print number of 1s in events[1]
+    setCount =  np.count_nonzero(events[1] == 2)
 
-        if not newPass:
-            newPass = {
-                "satellite": satellite.name,
-                "startTime": t,
-                "endTime": None,
-                "maxAlt": -90,
-                "segments": []
-            }
+    # Print the events ( timearray, event(which is 2 0 or 1) )
+    passes = []
 
+    riseTime = None
+    setTime = None
+    culmTime = None
+
+
+    # If all just culmination events just return the beginning and end times, and a single segment
+    if np.count_nonzero(events[1] == 1) == len(events[1]):
+        newPass = {
+            "satellite": satellite.name,
+            "startTime": t0,
+            "endTime": t1,
+            "segments": []
+        }
+
+        topocenteric = difference.at(t0)
+        alt, az, distance = topocenteric.altaz()
         newPass["segments"].append({
-            "time": t,
+            "time": t0.utc_datetime(),
             "alt": round(alt.degrees, 2),
             "az": round(az.degrees, 2),
             "distance": round(distance.km, 2)
         })
-        newPass["maxAlt"] = max(newPass["maxAlt"], alt.degrees)
 
-    if newPass and newPass["maxAlt"] >= minAltitude:
-        newPass["endTime"] = newPass["segments"][-1]["time"]
-        passes.append(newPass)
+        topocenteric = difference.at(t1)
+        alt, az, distance = topocenteric.altaz()
+        newPass["segments"].append({
+            "time": t1.utc_datetime(),
+            "alt": round(alt.degrees, 2),
+            "az": round(az.degrees, 2),
+            "distance": round(distance.km, 2)
+        })
+
+        newPass["maxAlt"] = round(alt.degrees, 2)
+
+        if newPass["maxAlt"] < minAltitude:
+            return []
+
+        return [newPass]
+
+
+
+
+    # print type of events data
+    for i in range(0, len(events[0])):
+
+        if events[1][i] == 0:
+            riseTime = events[0][i]
+        elif events[1][i] == 1:
+            culmTime = events[0][i]
+
+        elif events[1][i] == 2:
+            setTime = events[0][i]
+
+        # If the last event and we have a riseTime but no setTime, Calculate the time now
+        if i == len(events[0]) - 1 and riseTime is not None and setTime is None:
+            # Set time to now
+            setTime = t1
+
+        if setTime is not None:
+            if riseTime is None:
+                # Set time to now
+                riseTime = ts.now()
+
+            if culmTime is None:
+                # Set time to now
+                culmTime = ts.now()
+
+            newPass = {
+                "satellite": satellite.name,
+                "startTime": riseTime,
+                "endTime": setTime,
+                "maxAlt": culmTime,
+                "segments": []
+            }
+
+            topocenteric = difference.at(culmTime)
+            alt, az, distance = topocenteric.altaz()
+
+            if math.isnan(alt.degrees) or math.isnan(az.degrees) or math.isnan(distance.km):
+                riseTime = None
+                setTime = None
+                culmTime = None
+                continue
+
+            if alt.degrees < minAltitude:
+                riseTime = None
+                setTime = None
+                culmTime = None
+                continue
+
+            else:
+                newPass["segments"].append({
+                    "time": culmTime.utc_datetime(),
+                    "alt": round(alt.degrees, 2),
+                    "az": round(az.degrees, 2),
+                    "distance": round(distance.km, 2)
+                })
+                newPass["maxAlt"] = alt.degrees
+
+            interval_start = riseTime.utc_datetime()
+            interval_end = setTime.utc_datetime()
+
+
+            time_intervals = [interval_start + timedelta(seconds=30 * s)
+                          for s in range(int((interval_end - interval_start).total_seconds() / 30) + 1)]
+        
+
+            for t in time_intervals:
+                skyfield_time = ts.utc(t.year, t.month, t.day, t.hour, t.minute, t.second)
+                topocentric = difference.at(skyfield_time)
+                alt, az, distance = topocentric.altaz()
+                
+                if math.isnan(alt.degrees) or alt.degrees < 0:
+                    continue
+                
+                newPass["segments"].append({
+                    "time": t,
+                    "alt": round(alt.degrees, 2),
+                    "az": round(az.degrees, 2),
+                    "distance": round(distance.km, 2)
+                })
+
+
+            # Sort segments by time
+
+            newPass["segments"].sort(key=lambda x: x['time'])
+
+            passes.append(newPass)
+            riseTime = None
+            setTime = None
+            culmTime = None
+            newPass = None
+            
+    print(f"{satellite.name} found {len(passes)} passes")
 
     return passes
 
@@ -217,7 +324,7 @@ class Worker(QRunnable):
             events.sort(key=lambda x: x['startTime'])
 
             self.signals.finished.emit( {
-                "satellites": satellites,
+                "satellites": filtered_satellites,
                 "events": events,
                 "all_sat_names": [sat.name for sat in satellites]
             })
@@ -236,6 +343,7 @@ class SatelliteApp(QMainWindow):
         self.ts = ts
         self.topo = Topos(config["lat"], config["lon"])
         self.config = config
+        self.selected_sat = None
 
         # Main layout
         self.setWindowTitle("spaceboi")
@@ -248,6 +356,13 @@ class SatelliteApp(QMainWindow):
         # Left layout for table and buttons
         left_layout = QVBoxLayout()
         main_layout.addLayout(left_layout)
+
+
+        # Add map plot
+        self.fig_map, self.ax_map = plt.subplots(figsize=(12, 7))
+        self.canvas_map = FigureCanvas(self.fig_map)
+        self.map = initialize_map(self.ax_map)
+        left_layout.addWidget(self.canvas_map)
 
         # Add table
         self.table = QTableWidget(0, 4)
@@ -320,10 +435,16 @@ class SatelliteApp(QMainWindow):
         self.canvas = FigureCanvas(self.fig)
         right_layout.addWidget(self.canvas)
 
+
+
         # Timer for updating plot
         self.timer = QTimer(self)
         self.timer.timeout.connect(self.update_current_plot)
         self.timer.start(1000)
+
+        self.map_timer = QTimer(self)
+        self.map_timer.timeout.connect(self.update_map_plot)
+        self.map_timer.start(5000)
 
         self.refresh_data()
 
@@ -361,6 +482,7 @@ class SatelliteApp(QMainWindow):
         self.update_current_plot()
         self.update_sat_list()
         self.update_single_plot(None)
+        self.update_map_plot()
 
     def on_refresh_data_error(self, error_message):
         self.table.setDisabled(False)  # Re-enable UI even on error
@@ -386,18 +508,80 @@ class SatelliteApp(QMainWindow):
         # Don't let the table be edited
         self.table.setEditTriggers(QTableWidget.NoEditTriggers)
 
+
+
     def update_current_plot(self):
         self.ax.clear()
+    
+        events = [
+            event
+            for event in self.events
+            if event["startTime"] < self.ts.now() < event["endTime"]
+        ]
+    
+        if events:
+            # Plot current passes
+            plot_events(self.satellites, events, self.ts, self.topo, self.ax)
+            self.ax.title.set_text(
+                f"Current Passes - {self.ts.now().astimezone(pytz.timezone('US/Eastern')).strftime('%m/%d - %H:%M:%S')}"
+            )
 
-        events = []
 
-        for event in self.events:
-            if event["startTime"] < self.ts.now() < event["endTime"]:
-                events.append(event)
+            #Show the circle and the north south east west labels
 
-        plot_events(self.satellites, events, self.ts, self.topo, self.ax)
-        self.ax.title.set_text(f"Current Passes - {self.ts.now().astimezone(pytz.timezone('US/Eastern')).strftime('%m/%d - %H:%M:%S')}")
-        self.canvas.draw()
+            self.ax.set_xticks(np.radians([0, 90, 180, 270]))
+            self.ax.set_xticklabels(['N', 'E', 'S', 'W'])
+            self.ax.spines['polar'].set_visible(True)
+
+
+        else:
+            # No current passes
+            next_pass = next(
+                (event for event in self.events if event["startTime"] > self.ts.now()), None
+            )
+    
+            self.ax.title.set_text("")
+            self.ax.text(
+                0.5,
+                0.5,
+                "No Current Passes",
+                horizontalalignment="center",
+                verticalalignment="center",
+                transform=self.ax.transAxes,
+            )
+    
+            if next_pass:
+                # Calculate time till next pass
+                time_till_next_pass = next_pass["startTime"].utc_datetime() -  datetime.now().astimezone(pytz.timezone('UTC'))
+
+                countdown_str = str(time_till_next_pass).split(".")[0]
+
+                next_pass_string = (
+                    f"Next Pass {next_pass['satellite']}\n"
+                    f"{next_pass['startTime'].astimezone(pytz.timezone('US/Eastern')).strftime('%m/%d - %H:%M:%S')}\nT-{countdown_str}"
+                )
+
+                self.ax.text(
+                    0.5,
+                    0.4,
+                    next_pass_string,
+                    horizontalalignment="center",
+                    verticalalignment="center",
+                    transform=self.ax.transAxes,
+                )
+
+                # Clear all tick marks
+
+                self.ax.set_xticks([])
+                self.ax.set_yticks([])
+                self.ax.set_yticklabels([])
+                self.ax.set_xticklabels([])
+
+
+                # Clear circle around the polar plot
+                self.ax.spines['polar'].set_visible(False)
+
+        self.ax.figure.canvas.draw_idle()
 
     def update_single_plot(self, event):
 
@@ -409,18 +593,23 @@ class SatelliteApp(QMainWindow):
           sat = [sat for sat in self.satellites if sat.name == event["satellite"]][0]
         except IndexError:
             print(f"Satellite {event['satellite']} not found")
-            print(self.satellites)
             return
 
         plot_event(sat, event, self.ts, self.topo, ax=self.single_ax)
         self.single_ax.title.set_text(f"{event['satellite']} Pass - {event['startTime'].astimezone(pytz.timezone('US/Eastern')).strftime('%m/%d - %H:%M:%S')}")
         self.single_canvas.draw()
+
     def on_table_selection_changed(self):
         selected_items = self.table.selectedItems()
         if selected_items:
             selected_row = selected_items[0].row()
             selected_event = self.events[selected_row]
+            self.selected_sat = selected_event["satellite"]
             self.update_single_plot(selected_event)
+            self.update_map_plot()
+
+        else:
+            self.selected_sat = None
 
     def on_min_altitude_changed(self, text):
         try:
@@ -474,9 +663,66 @@ class SatelliteApp(QMainWindow):
             self.sat_list_widget.addItem(item)
         self.sat_list_widget.blockSignals(False)
 
+    def update_map_plot(self):
+
+        sats = self.satellites
+
+        if not self.config["filter_enabled"]:
+            # Limit to 20 satellites for legibility
+            sats = sats[:20]
+
+
+
+        plot_map(sats, self.ts, config, ax=self.ax_map, my_map=self.map, selected=self.selected_sat)
+        self.canvas_map.draw_idle()
+
     def writeConfig(self):
         with open('config.json', 'w') as f:
             json.dump(self.config, f, indent=4)
+
+
+def initialize_map(ax):
+    ax.clear()
+    my_map = Basemap(ax=ax, projection="mill", resolution="l", llcrnrlat=-90, urcrnrlat=90, llcrnrlon=-180, urcrnrlon=180)
+    my_map.drawmapboundary(fill_color='aqua')
+    my_map.fillcontinents(color='gray',lake_color='aqua')
+    return my_map
+
+def plot_map(satellites, ts, config, ax=None, my_map=None, selected=None):
+
+    if ax is None:
+        fig = plt.figure(figsize(12, 8))
+
+    if my_map is None:
+        my_map = initialize_map(ax)
+
+    else:
+        # Clear only the dynamic elements
+        for artist in ax.lines + ax.texts:
+            artist.remove()
+
+
+    now = ts.now()
+
+    for sat in satellites:
+        geocentric = sat.at(now)
+        subpoint = geocentric.subpoint()
+        lat = subpoint.latitude.degrees
+        lon = subpoint.longitude.degrees
+        x, y = my_map(lon, lat)
+
+        color = "blue" 
+
+        if selected is not None and (sat.name == selected):
+            color = "yellow"
+        my_map.plot(x, y, 'o', markersize=3, color=color)
+        ax.text(x, y-.2, sat.name, fontsize=10, ha='center', va='top', color=color)
+
+
+    # Plot the observer
+    my_map.plot(*my_map(config["lon"], config["lat"]), 'rx', markersize=10)
+
+    return my_map
 
 def fetchData(url):
 
