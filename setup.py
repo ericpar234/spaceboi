@@ -7,7 +7,7 @@ setup(
         description="A radio satellite event tracker.",
         long_description=open("README.md").read(),
         long_description_content_type="text/markdown",
-        url="github.com/ericpar234/spaceboi",
+        url="https://github.com/ericpar234/spaceboi",
         packages=find_packages(),
         py_modules=["spaceboi"],
         install_requires=open("requirements.txt").read().splitlines(),
