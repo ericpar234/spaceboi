@@ -4,3 +4,5 @@ pytz
 PyQt5
 matplotlib
 numpy
+Basemap
+darkdetect

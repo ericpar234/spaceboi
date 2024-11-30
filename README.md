@@ -61,15 +61,15 @@ Example config.json
 
 ```bash
 # A gui to view passes
-python spaceboi.py gui
+python spaceboi.py --mode gui
 
 # Print the passes
-python spaceboi.py cli
+python spaceboi.py --mode cli
 
 # or
 
 # Plot the passes
-python spaceboi.py plot
+python spaceboi.py --mode plot
 ```
 
 All config options can be used as command line arguments. For example:

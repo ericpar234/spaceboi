@@ -17,9 +17,11 @@
         "SONATE-2",
         "NOAA 20 (JPSS-1)",
         "NOAA 21 (JPSS-2)",
-        "GOES 19"
+        "FOX-1A (AO-85)",
+        "FOX-1CLIFF (AO-95)",
+        "FUNCUBE-1 (AO-73)"
     ],
-    "min_alt": 70,
+    "min_alt": 30,
     "hours": 36,
     "mode": "gui",
     "config": "config.json"

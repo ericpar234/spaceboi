@@ -8,11 +8,12 @@ import requests
 from io import BytesIO
 import concurrent.futures
 import argparse
+import darkdetect
 
 import sys
 from PyQt5.QtWidgets import (
     QApplication, QMainWindow, QTableWidget, QTableWidgetItem,
-    QVBoxLayout, QWidget, QPushButton, QHBoxLayout, QLineEdit, QLabel, QListWidget, QAbstractItemView, QListWidgetItem, QCheckBox
+    QVBoxLayout, QWidget, QPushButton, QHBoxLayout, QLineEdit, QLabel, QListWidget, QAbstractItemView, QListWidgetItem, QCheckBox, QSizePolicy
 )
 from PyQt5.QtCore import ( Qt, QRunnable, QThreadPool, pyqtSlot, pyqtSignal, QObject )
 
@@ -226,15 +227,17 @@ def plot_event(satellite, event, ts, topo, ax=None):
     max_alt_label = times[max_alt_index].astimezone(pytz.timezone('US/Eastern')).strftime('%H:%M')
     
     # Annotate start time
-
-    if max_alt_index != 0:
+    if max_alt_index != 0 and len(altitudes) > 2:
       ax.annotate(start_label, (azimuths[0], altitudes[0]), xytext=(3, 0), textcoords='offset points')
     
     # Annotate end time
-    ax.annotate(end_label, (azimuths[-1], altitudes[-1]), xytext=(3, 0), textcoords='offset points')
+    if len(altitudes) > 2:
+        ax.annotate(end_label, (azimuths[-1], altitudes[-1]), xytext=(3, 0), textcoords='offset points')
     
+
     # Annotate max altitude time
-    ax.annotate(max_alt_label, (azimuths[max_alt_index], max_alt), xytext=(3, 0), textcoords='offset points')
+    if len(altitudes) > 2:
+        ax.annotate(max_alt_label, (azimuths[max_alt_index], max_alt), xytext=(3, 0), textcoords='offset points')
 
     # Plot location of the sat now if it is in the pass
     current_time = ts.now()
@@ -246,7 +249,7 @@ def plot_event(satellite, event, ts, topo, ax=None):
         alt, az, distance = topocentric.altaz()
 
         if alt.degrees > 0:
-            ax.plot(np.radians(az.degrees), alt.degrees, 'ro', markersize=10)
+            ax.plot(np.radians(az.degrees), alt.degrees, 'ro', markersize=5)
             ax.annotate(event["satellite"], (np.radians(az.degrees), alt.degrees), xytext=(0,-5), textcoords='offset points', ha="center", va="top")
 
     # Customize the plot
@@ -307,7 +310,7 @@ class Worker(QRunnable):
     @pyqtSlot()
     def run(self):
         try:
-            filtered_satellites, satellites = fetchAllData(self.config)
+            filtered_satellites, satellites = fetchAllData(self.config, self.ts)
             events = []
             topo = Topos(self.config["lat"], self.config["lon"])
 
@@ -332,6 +335,24 @@ class Worker(QRunnable):
         except Exception as e:
             self.signals.error.emit(str(e))  # Emit the error message
 
+
+dark_stylesheet = """
+    QMainWindow {
+        background-color: #2b2b2b;
+        color: #ffffff;
+    }
+    QPushButton {
+        background-color: #3c3f41;
+        color: #ffffff;
+        border: 1px solid #555555;
+        border-radius: 5px;
+        padding: 5px;
+    }
+    QPushButton:hover {
+        background-color: #444444;
+    }
+"""
+
 class SatelliteApp(QMainWindow):
     def __init__(self, ts, config):
         super().__init__()
@@ -345,6 +366,10 @@ class SatelliteApp(QMainWindow):
         self.config = config
         self.selected_sat = None
 
+        #if darkdetect.isDark():
+        #    self.setStyleSheet(dark_stylesheet)
+
+
         # Main layout
         self.setWindowTitle("spaceboi")
         central_widget = QWidget()
@@ -357,24 +382,24 @@ class SatelliteApp(QMainWindow):
         left_layout = QVBoxLayout()
         main_layout.addLayout(left_layout)
 
-
         # Add map plot
         self.fig_map, self.ax_map = plt.subplots(figsize=(12, 7))
         self.canvas_map = FigureCanvas(self.fig_map)
         self.map = initialize_map(self.ax_map)
         left_layout.addWidget(self.canvas_map)
+        self.fig_map.tight_layout()
 
-        # Add table
-        self.table = QTableWidget(0, 4)
-        self.table.setHorizontalHeaderLabels(["Satellite", f"Start Time {self.config['timezone']}", f"End Time {self.config['timezone']}", "Max Altitude"])
-        left_layout.addWidget(self.table)
-        self.table.itemSelectionChanged.connect(self.on_table_selection_changed)
+        # Bottom left layout for table and buttons
+        bottom_left_layout = QHBoxLayout()
+        left_layout.addLayout(bottom_left_layout)
 
 
-        config_layout = QHBoxLayout()
         # Add buttons
-        btn_layout = QVBoxLayout()
-        
+        config_layout = QVBoxLayout()
+
+        # Add satellite selection list with checkboxes
+        sat_list_layout = QVBoxLayout()
+
         # Add input to change min altitude
         alt_layout = QHBoxLayout()
         min_altitude_input = QLineEdit()
@@ -382,7 +407,7 @@ class SatelliteApp(QMainWindow):
         min_altitude_input.textChanged.connect(self.on_min_altitude_changed)
         alt_layout.addWidget(QLabel("Min Altitude"))
         alt_layout.addWidget(min_altitude_input)
-        btn_layout.addLayout(alt_layout)
+        config_layout.addLayout(alt_layout)
 
         hours_layout = QHBoxLayout()
         hours_input = QLineEdit()
@@ -390,15 +415,7 @@ class SatelliteApp(QMainWindow):
         hours_input.textChanged.connect(self.on_hours_changed)
         hours_layout.addWidget(QLabel("Hours"))
         hours_layout.addWidget(hours_input)
-        btn_layout.addLayout(hours_layout)
-
-        refresh_btn = QPushButton("Refresh Data")
-        refresh_btn.clicked.connect(self.refresh_data)
-        btn_layout.addWidget(refresh_btn)
-        config_layout.addLayout(btn_layout)
-
-        # Add satellite selection list with checkboxes
-        sat_list_layout = QVBoxLayout()
+        config_layout.addLayout(hours_layout)
 
         self.sat_list_widget = QListWidget()
         self.sat_list_widget.setSelectionMode(QAbstractItemView.NoSelection)
@@ -419,23 +436,31 @@ class SatelliteApp(QMainWindow):
         sat_list_layout.addWidget(self.sat_list_widget)
         config_layout.addLayout(sat_list_layout)
 
-        left_layout.addLayout(config_layout)
+        refresh_btn = QPushButton("Refresh Data")
+        refresh_btn.clicked.connect(self.refresh_data)
+        config_layout.addWidget(refresh_btn)
+
+        bottom_left_layout.addLayout(config_layout, stretch=1)
+
+        # Add table
+        self.table = QTableWidget(0, 4)
+        self.table.setHorizontalHeaderLabels(["Satellite", f"Start Time {self.config['timezone']}", f"End Time {self.config['timezone']}", "Max Altitude"])
+        bottom_left_layout.addWidget(self.table, stretch=2)
+        self.table.itemSelectionChanged.connect(self.on_table_selection_changed)
 
         # Right layout for plots
         right_layout = QVBoxLayout()
         main_layout.addLayout(right_layout)
-
-        # Add Single plot
-        self.single_fig, self.single_ax = plt.subplots(subplot_kw={'projection': 'polar'})
-        self.single_canvas = FigureCanvas(self.single_fig)
-        right_layout.addWidget(self.single_canvas)
 
         # Add Current Events plot
         self.fig, self.ax = plt.subplots(subplot_kw={'projection': 'polar'})
         self.canvas = FigureCanvas(self.fig)
         right_layout.addWidget(self.canvas)
 
-
+        # Add Single plot
+        self.single_fig, self.single_ax = plt.subplots(subplot_kw={'projection': 'polar'})
+        self.single_canvas = FigureCanvas(self.single_fig)
+        right_layout.addWidget(self.single_canvas)
 
         # Timer for updating plot
         self.timer = QTimer(self)
@@ -673,7 +698,7 @@ class SatelliteApp(QMainWindow):
 
 
 
-        plot_map(sats, self.ts, config, ax=self.ax_map, my_map=self.map, selected=self.selected_sat)
+        plot_map(sats, self.ts, self.config, ax=self.ax_map, my_map=self.map, selected=self.selected_sat)
         self.canvas_map.draw_idle()
 
     def writeConfig(self):
@@ -764,7 +789,7 @@ def fetchData(url):
 
     return text_string
 
-def fetchAllData(config):
+def fetchAllData(config, ts):
   satellites = []
   all_sats = []
 
@@ -795,7 +820,7 @@ def fetchAllData(config):
 
   return filtered_sats, all_sats
 
-if __name__ == "__main__":
+def main(mode='gui'):
     
   config  = None
   ts = load.timescale()
@@ -803,7 +828,7 @@ if __name__ == "__main__":
 
   parser = argparse.ArgumentParser(description='spaceboi')
 
-  parser.add_argument('mode', type=str, choices=['gui', 'plot', 'cli'], default='cli', help='Mode to run the program in')
+  parser.add_argument('--mode', type=str, choices=['gui', 'plot', 'cli'], default='gui', required=False, help='Mode to run the program in')
   parser.add_argument('--lat', type=float, required=False, help='Latitude of the observer')
   parser.add_argument('--lon', type=float, required=False, help='Longitude of the observer')
   parser.add_argument('--min_alt', type=int, required=False, help='Minimum altitude of the satellite')
@@ -826,7 +851,7 @@ if __name__ == "__main__":
 
   if args.mode == 'plot':
     topo = Topos(config["lat"], config["lon"])
-    satellites, all_sats = fetchAllData(config)
+    satellites, all_sats = fetchAllData(config, ts)
     events = []
     for sat in satellites:
       events.extend(calcPasses(sat, t, config["hours"], topo, config["min_alt"]))
@@ -852,7 +877,7 @@ if __name__ == "__main__":
 
     t = ts.now()
     topo = Topos(config["lat"], config["lon"])
-    satellites, all_sats = fetchAllData(config)
+    satellites, all_sats = fetchAllData(config, ts)
     events = []
     for sat in satellites:
       events.extend(calcPasses(sat, t, config["hours"], topo, config["min_alt"]))
@@ -863,3 +888,6 @@ if __name__ == "__main__":
 
     for event in events:
         print(formatPass(event, pytz.timezone('US/Eastern')))
+
+if __name__ == "__main__":
+    main()

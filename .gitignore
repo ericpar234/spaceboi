@@ -1,3 +1,5 @@
 tle/
 venv/
 .md
+dist/
+*.egg-info/
