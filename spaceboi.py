@@ -873,8 +873,9 @@ def main(mode='gui'):
   parser.add_argument('--timezone', type=str, required=False, help='Timezone of the observer')
   parser.add_argument('--config', type=str, required=False, help='Configuration file', default='~/.config/spaceboi/config.json')
 
-
   args = parser.parse_args()
+  
+  args.config = os.path.expanduser(args.config)
 
   if not os.path.exists(args.config):
     print(f"Configuration file {args.config} not found")
