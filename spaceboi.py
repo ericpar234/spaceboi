@@ -712,7 +712,7 @@ class SatelliteApp(QMainWindow):
         self.canvas_map.draw_idle()
 
     def writeConfig(self):
-        with open('config.json', 'w') as f:
+        with open(self.config["config"], 'w') as f:
             json.dump(self.config, f, indent=4)
 
 

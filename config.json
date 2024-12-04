@@ -24,5 +24,5 @@
     "min_alt": 30,
     "hours": 36,
     "mode": "gui",
-    "config": "./config.json"
+    "config": "~/.config/spaceboi/config.json"
 }
