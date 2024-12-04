@@ -422,6 +422,22 @@ class SatelliteApp(QMainWindow):
         hours_layout.addWidget(hours_input)
         config_layout.addLayout(hours_layout)
 
+        # Lat lon
+        lat_lon_layout = QHBoxLayout()
+
+        lat_widget = QLineEdit()
+        lon_widget = QLineEdit()
+        lat_widget.setPlaceholderText(str(self.config["lat"]))
+        lon_widget.setPlaceholderText(str(self.config["lon"]))
+        lat_widget.textChanged.connect(self.update_latitude)
+        lon_widget.textChanged.connect(self.update_longitude)
+
+        lat_lon_layout.addWidget(QLabel("Latitude:"))
+        lat_lon_layout.addWidget(lat_widget)
+        lat_lon_layout.addWidget(QLabel("Longitude:"))
+        lat_lon_layout.addWidget(lon_widget)
+        config_layout.addLayout(lat_lon_layout)
+
         self.sat_list_widget = QListWidget()
         self.sat_list_widget.setSelectionMode(QAbstractItemView.NoSelection)
         self.sat_list_widget.itemChanged.connect(self.on_satellite_selection_changed)
@@ -471,7 +487,6 @@ class SatelliteApp(QMainWindow):
         self.single_ax.set_yticks([])
         self.single_ax.spines['polar'].set_visible(False)
 
-
         # Timer for updating plot
         self.timer = QTimer(self)
         self.timer.timeout.connect(self.update_current_plot)
@@ -518,6 +533,8 @@ class SatelliteApp(QMainWindow):
         self.update_sat_list()
         self.update_single_plot(None)
         self.update_map_plot()
+
+        self.writeConfig()
 
     def on_refresh_data_error(self, error_message):
         self.table.setDisabled(False)  # Re-enable UI even on error
@@ -698,6 +715,20 @@ class SatelliteApp(QMainWindow):
             self.sat_list_widget.addItem(item)
         self.sat_list_widget.blockSignals(False)
 
+    def update_latitude(self, text):
+        try:
+            float_lat = float(text)
+            self.config["lat"] = float_lat
+        except ValueError:
+            pass
+
+    def update_longitude(self, text):
+        try:
+            float_lon = float(text)
+            self.config["lon"] = float_lon
+        except ValueError:
+            pass
+
     def update_map_plot(self):
 
         sats = self.satellites
@@ -705,8 +736,6 @@ class SatelliteApp(QMainWindow):
         if not self.config["filter_enabled"]:
             # Limit to 20 satellites for legibility
             sats = sats[:20]
-
-
 
         plot_map(sats, self.ts, self.config, ax=self.ax_map, my_map=self.map, selected=self.selected_sat)
         self.canvas_map.draw_idle()
