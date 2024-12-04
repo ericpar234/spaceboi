@@ -1,9 +1,9 @@
-![spaceboi](https://github.com/ericpar234/spaceboi/cover.png)
+![spaceboi](cover.png)
 
 
-# Spaceboi
+# spaceboi
 
-Spaceboi gives you the sat events. Period.
+spaceboi gives you the satellite passes. Period.
 
 A simple satellite pass predictor using TLE data from celestrak.org. It can be
 run in a GUI mode or CLI mode. The GUI mode uses Qt to display the passes in a
@@ -88,7 +88,7 @@ python spaceboi.py --mode plot
 All config options can be used as command line arguments. For example:
 
 ```bash
-python spaceboi.py gui \
+python spaceboi.py --mode gui \
 --lat 40.7128 --lon -74.006 --timezone "America/New_York" \
 --filter_enabled true \
 --satellites "NOAA 15" "NOAA 18" "NOAA 19" "METEOR-M2 2" "METEOR-M2 3" "ISS (ZARYA)" "GOES 18" \
