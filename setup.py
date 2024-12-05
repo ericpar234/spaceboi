@@ -2,7 +2,7 @@ from setuptools import setup, find_packages
 
 setup(
         name="spaceboi",
-        version="0.1.2",
+        version="0.1.3",
         author="ericpar234",
         description="A radio satellite event tracker.",
         long_description=open("README.md").read(),
