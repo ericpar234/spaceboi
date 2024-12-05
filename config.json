@@ -25,4 +25,5 @@
     "hours": 36,
     "mode": "gui",
     "config": "~/.config/spaceboi/config.json"
+    "tle": "~/.local/share/spaceboi/TLE"
 }

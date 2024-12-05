@@ -55,7 +55,8 @@ Example config.json
     "min_alt": 10,
     "hours": 24,
     "mode": "gui",
-    "config": "config.json"
+    "config": "~/.config/spaceboi/config.json",
+    "tle": "~/.local/share/spaceboi/TLE"
 }
 ```
 
@@ -78,8 +79,6 @@ python spaceboi.py --mode gui
 
 # Print the passes
 python spaceboi.py --mode cli
-
-# or
 
 # Plot the passes
 python spaceboi.py --mode plot

@@ -8,7 +8,6 @@ import requests
 from io import BytesIO
 import concurrent.futures
 import argparse
-import darkdetect
 
 import sys
 from PyQt5.QtWidgets import (
@@ -788,30 +787,34 @@ def plot_map(satellites, ts, config, ax=None, my_map=None, selected=None):
 
     return my_map
 
-def fetchData(url):
+def fetchData(config, url):
+
+    tle_dir = os.path.expanduser(config["tle"])
 
     # hash the url to get a unique filename
     hsh = hashlib.md5(url.encode()).hexdigest()
 
     # check if directory exists
-    if not os.path.exists('./tle'):
-        os.makedirs('./tle')
+    if not os.path.exists(tle_dir):
+        os.makedirs(tle_dir)
 
     # check if file exists
     text_string = None
 
     refresh = False
 
-    if os.path.exists(f'./tle/{hsh}.txt'):
+    tle_file = f'{tle_dir}/{hsh}.txt'
+
+    if os.path.exists(tle_file):
         # check if file is older than 1 day
-        if (time.time() - os.path.getmtime(f'./tle/{hsh}.txt')) > 86400:
+        if (time.time() - os.path.getmtime(tle_dir)) > 86400:
             # file is older than 1 day, refresh
             refresh = True
             
 
         else:
             # file is not older than 1 day, load from file
-            with open(f'./tle/{hsh}.txt', 'r') as f:
+            with open(tle_file, 'r') as f:
                 text_string = f.read()
 
     else:
@@ -823,7 +826,7 @@ def fetchData(url):
          text_string = response.content
          text_string = text_string.decode('utf-8')
 
-         with open(f'./tle/{hsh}.txt', 'w') as f:
+         with open(tle_file, 'w') as f:
              f.write(text_string)
 
     return text_string
@@ -834,7 +837,7 @@ def fetchAllData(config, ts):
   for url in config["urls"]:
     # Get the json data from the URL
 
-    text_string = fetchData(url)
+    text_string = fetchData(config, url)
     json_sats = json.loads(text_string)
 
 
@@ -884,7 +887,8 @@ DEFAULT_CONFIG  = {
     "min_alt": 30,
     "hours": 36,
     "mode": "gui",
-    "config": "~/.config/spaceboi/config.json"
+    "config": "~/.config/spaceboi/config.json",
+    "tle": "~/.local/share/spaceboi/TLE"
 }
 
 def main(mode='gui'):
@@ -904,6 +908,7 @@ def main(mode='gui'):
   parser.add_argument('--filter_enabled', action='store_true', help='Filter satellites')
   parser.add_argument('--timezone', type=str, required=False, help='Timezone of the observer')
   parser.add_argument('--config', type=str, required=False, help='Configuration file', default='~/.config/spaceboi/config.json')
+  parser.add_argument('--tle', type=str, required=False, default="~/.local/share/spaceboi/TLE", help='TLE Cache directory')
 
   args = parser.parse_args()
   
@@ -924,6 +929,8 @@ def main(mode='gui'):
   for key, value in vars(args).items():
     if value:
       config[key] = value
+
+  config["tle"] = os.path.expanduser(args.tle)
 
   if args.mode == 'plot':
     topo = Topos(config["lat"], config["lon"])
