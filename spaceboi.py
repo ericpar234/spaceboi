@@ -12,7 +12,7 @@ import argparse
 import sys
 from PyQt5.QtWidgets import (
     QApplication, QMainWindow, QTableWidget, QTableWidgetItem,
-    QVBoxLayout, QWidget, QPushButton, QHBoxLayout, QLineEdit, QLabel, QListWidget, QAbstractItemView, QListWidgetItem, QCheckBox, QSizePolicy
+    QVBoxLayout, QWidget, QPushButton, QHBoxLayout, QLineEdit, QLabel, QListWidget, QAbstractItemView, QListWidgetItem, QCheckBox, QSizePolicy, QHeaderView
 )
 from PyQt5.QtCore import ( Qt, QRunnable, QThreadPool, pyqtSlot, pyqtSignal, QObject)
 from PyQt5.QtGui import QIcon
@@ -189,7 +189,7 @@ def formatPass(satPass, local_tz):
     passString = f"### Pass for {satPass['satellite']}\n"
     passString += f"**Start Time:** {satPass['startTime'].astimezone(local_tz).strftime('%Y-%m-%d %H:%M:%S')}\n"
     passString += f"**End Time:** {satPass['endTime'].astimezone(local_tz).strftime('%Y-%m-%d %H:%M:%S')}\n"
-    passString += f"**Max Altitude:** {satPass['maxAlt']:.1f}\n\n"
+    passString += f"**Max Alt:** {satPass['maxAlt']:.1f}\n\n"
 
     passString += f"| Time - {local_tz} | Altitude | Azimuth | Distance |\n"
     passString += "|------|----------|---------|----------|\n"
@@ -464,9 +464,11 @@ class SatelliteApp(QMainWindow):
 
         # Add table
         self.table = QTableWidget(0, 4)
-        self.table.setHorizontalHeaderLabels(["Satellite", f"Start Time {self.config['timezone']}", f"End Time {self.config['timezone']}", "Max Altitude"])
+        self.table.setHorizontalHeaderLabels(["Satellite", f"Start Time", f"End Time", "Max Alt"])
         bottom_left_layout.addWidget(self.table, stretch=2)
         self.table.itemSelectionChanged.connect(self.on_table_selection_changed)
+        self.table.verticalHeader().setVisible(False)
+        self.table.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
 
         # Right layout for plots
         right_layout = QVBoxLayout()
@@ -546,7 +548,12 @@ class SatelliteApp(QMainWindow):
     def refresh_table(self):
         self.table.setRowCount(len(self.events))
 
-        # Sort by time
+        timezone = pytz.timezone(self.config["timezone"])
+        now = datetime.now(timezone)
+        abr_timezone = now.tzname()
+
+        self.table.setHorizontalHeaderLabels(["Satellite", f"Start Time - {abr_timezone}", f"End Time - {abr_timezone}", "Max Alt"])
+
         for i, event in enumerate(self.events):
             self.table.setItem(i, 0, QTableWidgetItem(event["satellite"]))
             self.table.setItem(i, 1, QTableWidgetItem(str(event["startTime"].astimezone(pytz.timezone('US/Eastern')).strftime('%Y-%m-%d %H:%M:%S'))))
@@ -555,10 +562,15 @@ class SatelliteApp(QMainWindow):
 
         # Resize the time cols to fit the content
         self.table.resizeColumnsToContents()
-
         # Don't let the table be edited
         self.table.setEditTriggers(QTableWidget.NoEditTriggers)
 
+        self.table.setAlternatingRowColors(True)
+        
+        self.table.setSortingEnabled(True)
+
+        # Default sorting by start time
+        self.table.sortItems(1, Qt.AscendingOrder)
 
 
     def update_current_plot(self):
@@ -652,12 +664,24 @@ class SatelliteApp(QMainWindow):
 
     def on_table_selection_changed(self):
         selected_items = self.table.selectedItems()
+        
         if selected_items:
             selected_row = selected_items[0].row()
-            selected_event = self.events[selected_row]
-            self.selected_sat = selected_event["satellite"]
-            self.update_single_plot(selected_event)
-            self.update_map_plot()
+            name = self.table.item(selected_row, 0).text()
+            start_time = self.table.item(selected_row, 1).text()
+
+            print(f"Selected {name} at {start_time}")
+
+            selected_event = None
+
+            for event in self.events:
+                if event["satellite"] == name and event["startTime"].astimezone(pytz.timezone('US/Eastern')).strftime('%Y-%m-%d %H:%M:%S') == start_time:
+                    self.selected_sat = event["satellite"]
+                    self.update_single_plot(event)
+                    self.update_map_plot()
+
+            if self.selected_sat is None:
+                print(f"Could not find {name} at {start_time}")
 
         else:
             self.selected_sat = None
