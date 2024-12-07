@@ -8,11 +8,12 @@ import requests
 from io import BytesIO
 import concurrent.futures
 import argparse
+import platform
 
 import sys
 from PyQt5.QtWidgets import (
     QApplication, QMainWindow, QTableWidget, QTableWidgetItem,
-    QVBoxLayout, QWidget, QPushButton, QHBoxLayout, QLineEdit, QLabel, QListWidget, QAbstractItemView, QListWidgetItem, QCheckBox, QSizePolicy, QHeaderView
+    QVBoxLayout, QWidget, QPushButton, QHBoxLayout, QLineEdit, QLabel, QListWidget, QAbstractItemView, QListWidgetItem, QCheckBox, QSizePolicy, QHeaderView, QMenu, QAction
 )
 from PyQt5.QtCore import ( Qt, QRunnable, QThreadPool, pyqtSlot, pyqtSignal, QObject)
 from PyQt5.QtGui import QIcon
@@ -26,7 +27,7 @@ import matplotlib.pyplot as plt
 from matplotlib.animation import FuncAnimation
 import pytz
 from mpl_toolkits.basemap import Basemap
-
+import icalendar
 from skyfield.api import Topos, load, EarthSatellite
 
 def calcPasses(satellite, startTime, hours, topo, minAltitude=0):
@@ -529,6 +530,49 @@ class SatelliteApp(QMainWindow):
         for worker in self.active_workers:
             worker.stop()
 
+    def create_calendar_invite(self, event):
+
+        from datetime import datetime, timedelta
+
+        cal = icalendar.Calendar()
+        cal.add('prodid', '-//spaceboi//spaceboi//')
+        cal.add('version', '2.0')
+
+        start_time = event['startTime'].astimezone(pytz.timezone(self.config['timezone']))
+        end_time = event['endTime'].astimezone(pytz.timezone(self.config['timezone']))
+
+        cal_event = icalendar.Event()
+        cal_event.add('summary', f"Pass for {event['satellite']}")
+        cal_event.add('dtstart', start_time)
+        cal_event.add('dtend', end_time)
+        cal_event.add('dtstamp', datetime.now())
+        cal_event.add('location', f"{self.config['lat']},{self.config['lon']}")
+        cal_event.add('description', formatPass(event, pytz.timezone(self.config['timezone'])))
+
+        cal.add_component(cal_event)
+
+        os.makedirs('/tmp/spaceboi/calendar/', exist_ok=True)
+        cal_invite_path = f'/tmp/spaceboi/calendar/{event["satellite"]}_{event["startTime"].astimezone(pytz.timezone(self.config["timezone"])).strftime("%Y-%m-%d_%H-%M")}.ics'
+
+        with open(cal_invite_path, 'wb') as f:
+            f.write(cal.to_ical())
+
+        return cal_invite_path
+
+
+    def handle_calendar_invite_click(self, event):
+
+        cal_invite_path = self.create_calendar_invite(event)
+        if platform.system() == 'Linux':
+          os.system(f'xdg-open \"{cal_invite_path}\"')
+
+        elif platform.system() == 'Darwin':
+          os.system(f'open \"{cal_invite_path}\"')
+        elif platform.system() == 'Windows':
+            os.system(f'start \"{cal_invite_path}\"')
+        else:
+            print(f"Calendar invite saved to {cal_invite_path}")
+
     def refresh_table(self):
 
         self.table.setSortingEnabled(False)
@@ -538,9 +582,13 @@ class SatelliteApp(QMainWindow):
         now = datetime.now(timezone)
         abr_timezone = now.tzname()
 
-        self.table.setHorizontalHeaderLabels(["Satellite", f"Start Time - {abr_timezone}", f"End Time - {abr_timezone}", "Max Alt"])
+        self.table.setHorizontalHeaderLabels(["Satellite", f"Start Time - {abr_timezone}", f"End Time - {abr_timezone}", "Max Alt"," "])
 
         self.table.setRowCount(len(self.events))
+
+        self.table.setContextMenuPolicy(Qt.CustomContextMenu)
+        self.table.customContextMenuRequested.connect(self.show_context_menu)
+
         for i, event in enumerate(self.events):
             self.table.setItem(i, 0, QTableWidgetItem(event["satellite"]))
             self.table.setItem(i, 1, QTableWidgetItem(str(event["startTime"].astimezone(pytz.timezone('US/Eastern')).strftime('%Y-%m-%d %H:%M:%S'))))
@@ -559,6 +607,16 @@ class SatelliteApp(QMainWindow):
         # Default sorting by start time
         self.table.sortItems(1, Qt.AscendingOrder)
 
+    def show_context_menu(self, position):
+       menu = QMenu()
+       add_to_calendar_action = QAction("Add to calendar", self)
+       add_to_calendar_action.triggered.connect(lambda: self.handle_calendar_invite_click(self.get_event_at_position(position)))
+       menu.addAction(add_to_calendar_action)
+       menu.exec_(self.table.viewport().mapToGlobal(position))
+
+    def get_event_at_position(self, position):
+        row = self.table.rowAt(position.y())
+        return self.events[row]
 
     def update_current_plot(self):
         self.ax.clear()

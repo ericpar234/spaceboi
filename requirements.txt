@@ -6,3 +6,4 @@ matplotlib
 numpy
 Basemap
 darkdetect
+icalendar
