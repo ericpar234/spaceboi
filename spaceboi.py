@@ -8,6 +8,7 @@ import requests
 from io import BytesIO
 import concurrent.futures
 import argparse
+import platform
 
 import sys
 from PyQt5.QtWidgets import (
@@ -560,8 +561,17 @@ class SatelliteApp(QMainWindow):
 
 
     def handle_calendar_invite_click(self, event):
+
         cal_invite_path = self.create_calendar_invite(event)
-        os.system(f'xdg-open \"{cal_invite_path}\"')
+        if platform.system() == 'Linux':
+          os.system(f'xdg-open \"{cal_invite_path}\"')
+
+        elif platform.system() == 'Darwin':
+          os.system(f'open \"{cal_invite_path}\"')
+        elif platform.system() == 'Windows':
+            os.system(f'start \"{cal_invite_path}\"')
+        else:
+            print(f"Calendar invite saved to {cal_invite_path}")
 
     def refresh_table(self):
 
@@ -599,7 +609,7 @@ class SatelliteApp(QMainWindow):
 
     def show_context_menu(self, position):
        menu = QMenu()
-       add_to_calendar_action = QAction("🗓️ Add to calendar", self)
+       add_to_calendar_action = QAction("Add to calendar", self)
        add_to_calendar_action.triggered.connect(lambda: self.handle_calendar_invite_click(self.get_event_at_position(position)))
        menu.addAction(add_to_calendar_action)
        menu.exec_(self.table.viewport().mapToGlobal(position))
