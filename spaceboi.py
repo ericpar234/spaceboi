@@ -613,10 +613,13 @@ class SatelliteApp(QMainWindow):
        add_to_calendar_action.triggered.connect(lambda: self.handle_calendar_invite_click(self.get_event_at_position(position)))
        menu.addAction(add_to_calendar_action)
        menu.exec_(self.table.viewport().mapToGlobal(position))
-
+        
     def get_event_at_position(self, position):
         row = self.table.rowAt(position.y())
-        return self.events[row]
+        for event in self.events:
+            if event["satellite"] == self.table.item(row, 0).text() and event["startTime"].astimezone(pytz.timezone('US/Eastern')).strftime('%Y-%m-%d %H:%M:%S') == self.table.item(row, 1).text():
+                return event
+        return None
 
     def update_current_plot(self):
         self.ax.clear()
